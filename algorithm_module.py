@@ -238,21 +238,69 @@ def heuristic_algorithm(file_path):
         if p > best_profit:
             best_assignment, best_relocation, best_profit = a, r, p
 
-    # Chain reallocation idea:
-    # Focus on high-value rejected orders, force them early and rerun greedy.
-    # This triggers global reassignment chains cheaply (multi-start with priority injection).
+    # Local Chain Reassignment (bounded BFS):
+    # Try to insert a high-value rejected order by forcing it early.
+    # If that displaces an accepted order, try to rescue the displaced order next, forming a short chain.
+    #
+    # This approximates a local augmenting-path reassignment while keeping runtime bounded.
     rejected = [oid for oid in orders.keys() if best_assignment[oid - 1] == -1]
     rejected.sort(key=lambda oid: -R[oid])
-    topM = rejected[: min(10, len(rejected))]
 
-    start_t = t.time()
-    for oid_force in topM:
-        if t.time() - start_t > 2.0:  # keep this extra loop lightweight
-            break
-        forced_order = [oid_force] + [x for x in base if x != oid_force]
-        a, r, p = run_greedy(forced_order)
+    # Hard time budget for chain search (seconds)
+    chain_time_limit = 2.0
+    chain_end_time = t.time() + chain_time_limit
+
+    # Only seed a few highest-value rejected orders
+    seed_orders = rejected[: min(5, len(rejected))]
+
+    # BFS controls
+    max_depth = 4
+    branch_k = 2  # expand only top-k displaced orders each layer
+
+    # Snapshot of the current best accepted set (used to detect displacement)
+    best_accepted_set = {oid for oid in orders.keys() if best_assignment[oid - 1] != -1}
+
+    def _forced_run(prefix):
+        # Build a full ordering list with prefix forced first (dedup) then base.
+        seen = set()
+        forced = []
+        for x in prefix:
+            if x not in seen:
+                seen.add(x)
+                forced.append(x)
+        full = forced + [x for x in base if x not in seen]
+        return run_greedy(full)
+
+    # BFS queue items: (depth, prefix_list)
+    queue = [(1, [seed]) for seed in seed_orders]
+    visited_prefixes = set()  # avoid repeats; store tuple(prefix)
+
+    while queue and t.time() < chain_end_time:
+        depth, prefix = queue.pop(0)
+        key = tuple(prefix)
+        if key in visited_prefixes:
+            continue
+        visited_prefixes.add(key)
+
+        a, r, p = _forced_run(prefix)
         if p > best_profit:
             best_assignment, best_relocation, best_profit = a, r, p
+            best_accepted_set = {oid for oid in orders.keys() if best_assignment[oid - 1] != -1}
+
+        if depth >= max_depth or t.time() >= chain_end_time:
+            continue
+
+        # Identify displaced orders: previously accepted but now rejected (lost due to forcing)
+        new_accepted = {oid for oid in orders.keys() if a[oid - 1] != -1}
+        displaced = list(best_accepted_set - new_accepted)
+        if not displaced:
+            continue
+
+        displaced.sort(key=lambda oid: -R[oid])
+        for nxt in displaced[: min(branch_k, len(displaced))]:
+            if t.time() >= chain_end_time:
+                break
+            queue.append((depth + 1, prefix + [nxt]))
 
     return best_assignment, best_relocation
 
