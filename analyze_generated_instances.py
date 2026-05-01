@@ -14,6 +14,10 @@ DATE_FMT = "%Y/%m/%d %H:%M"
 PLANNING_START = datetime(2023, 1, 1, 0, 0)
 
 
+def fmt_time(dt: datetime) -> str:
+    return dt.strftime(DATE_FMT)
+
+
 def parse_time(s: str) -> datetime:
     return datetime.strptime(s.strip(), DATE_FMT)
 
@@ -85,6 +89,106 @@ def compute_R(orders, rate):
         hrs = (o.rt - o.pt).total_seconds() / 3600.0
         R[oid] = rate[o.req_level] * hrs
     return R
+
+
+def baseline_greedy_with_relocation(path: str):
+    """
+    Baseline heuristic (still simple, but not too weak):
+    - Single greedy pass (no multi-start, no BFS reassignment)
+    - Allows relocation subject to remaining budget B
+    - Allows free upgrade: request level l can use car level l or l+1
+    - Orders are processed by revenue (desc), tie by earlier pickup time
+    """
+    nS, nC, nL, nK, nD, B, cars, rate, orders, T = load_instance(path)
+
+    # precompute revenue to rank orders
+    R = compute_R(orders, rate)
+    order_ids = list(orders.keys())
+    order_ids.sort(key=lambda oid: (-R[oid], orders[oid].pt, oid))
+
+    # car state
+    car_level = {cid: cars[cid][0] for cid in cars}
+    car_station = {cid: cars[cid][1] for cid in cars}
+    car_ready = {cid: PLANNING_START for cid in cars}
+
+    budget_left = int(B)
+
+    assignment = [-1] * nK
+    relocation = []
+
+    # nearby stations list (by travel time into pickup station)
+    nearby = {s: list(range(1, nS + 1)) for s in range(1, nS + 1)}
+    for s in range(1, nS + 1):
+        nearby[s].sort(key=lambda j: T[(j, s)])  # from j -> s
+
+    m_near_local = min(8, nS)
+
+    for oid in order_ids:
+        o = orders[oid]
+        deadline = o.pt - timedelta(minutes=30)
+        if deadline < PLANNING_START:
+            deadline = PLANNING_START
+
+        best = None
+        # candidate: (move_minutes, upgrade_flag, arrive_time, from_station, car_id)
+
+        # Try same-station first (move=0)
+        for cid in cars:
+            if car_station[cid] != o.ps:
+                continue
+            lvl = car_level[cid]
+            if not (lvl == o.req_level or lvl == o.req_level + 1):
+                continue
+            if car_ready[cid] <= deadline:
+                cand = (0, 0 if lvl == o.req_level else 1, car_ready[cid], o.ps, cid)
+                if best is None or cand < best:
+                    best = cand
+
+        # Try relocation from nearby stations
+        if best is None and budget_left > 0:
+            for from_s in nearby[o.ps][:m_near_local]:
+                if from_s == o.ps:
+                    continue
+                move_minutes = T[(from_s, o.ps)]
+                if move_minutes <= 0 or move_minutes > budget_left:
+                    continue
+
+                for cid in cars:
+                    if car_station[cid] != from_s:
+                        continue
+                    lvl = car_level[cid]
+                    if not (lvl == o.req_level or lvl == o.req_level + 1):
+                        continue
+                    arrive = car_ready[cid] + timedelta(minutes=move_minutes)
+                    if arrive <= deadline:
+                        cand = (
+                            move_minutes,
+                            0 if lvl == o.req_level else 1,
+                            arrive,
+                            from_s,
+                            cid,
+                        )
+                        if best is None or (cand[0], cand[1], cand[2]) < (best[0], best[1], best[2]):
+                            best = cand
+
+        if best is None:
+            continue
+
+        move_minutes, _up, _arrive, from_s, cid = best
+
+        # record relocation if needed (start at car_ready time)
+        if from_s != o.ps:
+            relocation.append([int(cid), int(from_s), int(o.ps), fmt_time(car_ready[cid])])
+            budget_left -= int(move_minutes)
+            car_station[cid] = o.ps
+
+        assignment[oid - 1] = int(cid)
+
+        # update car after order
+        car_station[cid] = o.rs
+        car_ready[cid] = o.rt + timedelta(hours=4)
+
+    return assignment, relocation
 
 
 def evaluate(path: str, assignment, relocation):
@@ -197,11 +301,26 @@ def main():
     for fp in files:
         t0 = time.time()
         try:
+            # main heuristic
             assignment, relocation = algorithm_module.heuristic_algorithm(fp)
             feas, profit, info = evaluate(fp, assignment, relocation)
+
+            # baseline (single-pass greedy with relocation)
+            b_assignment, b_relocation = baseline_greedy_with_relocation(fp)
+            b_feas, b_profit, b_info = evaluate(fp, b_assignment, b_relocation)
+
             err = "" if feas else info
+            b_err = "" if b_feas else b_info
+
+            # gap vs baseline (profit based)
+            if profit is None or b_profit is None:
+                gap = None
+            else:
+                denom = abs(b_profit) if abs(b_profit) > 1e-9 else 1.0
+                gap = (profit - b_profit) / denom
         except Exception as e:
             feas, profit, err = False, None, repr(e)
+            b_feas, b_profit, b_err, gap = False, None, "", None
         dt = time.time() - t0
 
         rows.append(
@@ -211,7 +330,11 @@ def main():
                 "time_s": dt,
                 "feasible": bool(feas),
                 "profit": float(profit) if profit is not None else None,
+                "baseline_feasible": bool(b_feas),
+                "baseline_profit": float(b_profit) if b_profit is not None else None,
+                "gap_vs_baseline": float(gap) if gap is not None else None,
                 "error": err,
+                "baseline_error": b_err,
             }
         )
 
@@ -224,8 +347,13 @@ def main():
         .agg(
             n=("file", "count"),
             feasible_rate=("feasible", "mean"),
+            baseline_feasible_rate=("baseline_feasible", "mean"),
             profit_mean=("profit", "mean"),
             profit_std=("profit", "std"),
+            baseline_profit_mean=("baseline_profit", "mean"),
+            baseline_profit_std=("baseline_profit", "std"),
+            gap_mean=("gap_vs_baseline", "mean"),
+            gap_std=("gap_vs_baseline", "std"),
             time_mean=("time_s", "mean"),
         )
         .reset_index()
@@ -277,6 +405,25 @@ def main():
     plt.tight_layout()
     plt.savefig("analysis_outputs/feasible_rate_by_scenario.png", dpi=200)
     plt.close()
+
+    # Plot: gap histogram per scenario (feasible only)
+    for sc in scenarios:
+        sub = df[
+            (df["scenario"] == sc)
+            & (df["feasible"] == True)
+            & (df["baseline_feasible"] == True)
+            & (df["gap_vs_baseline"].notna())
+        ]
+        if sub.empty:
+            continue
+        plt.figure(figsize=(7, 4))
+        plt.hist(sub["gap_vs_baseline"], bins=10)
+        plt.title(f"Gap vs baseline — {sc} (feasible only)")
+        plt.xlabel("(profit - baseline_profit) / |baseline_profit|")
+        plt.ylabel("Count")
+        plt.tight_layout()
+        plt.savefig(f"analysis_outputs/gap_hist_{sc}.png", dpi=200)
+        plt.close()
 
     print("Wrote outputs to analysis_outputs/")
     print(summary)
