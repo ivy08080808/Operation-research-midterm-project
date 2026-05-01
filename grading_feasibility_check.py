@@ -2,8 +2,17 @@
 You do not need to change the code in this file.
 You only need to ensure that the TAs can run your algorithm here.
 '''
+import importlib.util
+from pathlib import Path
+
 from MTP_lib import *
-from algorithm_module import heuristic_algorithm
+
+# Implementation: OR114-2_midtermProject_exampleCode_algorithm_module.py (submission layout)
+_algo_path = Path(__file__).resolve().parent / "OR114-2_midtermProject_exampleCode_algorithm_module.py"
+_spec = importlib.util.spec_from_file_location("or_midterm_algorithm_module", _algo_path)
+_algo_mod = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_algo_mod)
+heuristic_algorithm = _algo_mod.heuristic_algorithm
 
 def check_format(assignment, relocation):
     for i in assignment:
@@ -142,5 +151,5 @@ if __name__ == '__main__':
                 'Feasibility': feasibility
             }])], ignore_index=True)
 
-# output result
-result_df.to_csv('result.csv', index = False)
+    # output result
+    result_df.to_csv('result.csv', index = False)
