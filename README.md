@@ -8,7 +8,7 @@ This repository contains code for the OR114-2 Spring 2026 midterm project.
 |------|----------|
 | Root `*.py` | Assignment / grading scripts: `algorithm_module.py` (required submission), `problem_1_code.py`, `analyze_generated_instances.py`, `grading_feasibility_check.py`, etc. |
 | `docs/` | Experiment notes [`EXPERIMENT_REPORT.md`](docs/EXPERIMENT_REPORT.md); scenario summary PDF: `scenario_summary.pdf` |
-| `analysis_outputs/` | **Regenerable** experiment CSV (do not edit by hand; re-run scripts) |
+| `analysis_outputs/` | **Regenerable** experiment CSV; snapshots under `v1/`; v2 tagged runs under `v2/algo_version/` and `v2/upperbound_version/` (see `analysis_outputs/README.txt`) |
 | `generated_instances_v2.zip` | Archive of random instances; extract to `generated_instances_v2/` (**not tracked**, see `.gitignore`) |
 | Names containing `exampleCode` / `OR114-2_midtermProject_example*` | Course staff examples, separate from your submitted `algorithm_module.py` |
 
@@ -71,5 +71,6 @@ python3 OR114-2_midtermProject_exampleCode_grading_program.py
 - **Spec & column definitions:** [docs/EXPERIMENT_REPORT.md](docs/EXPERIMENT_REPORT.md)
 - **Full run** (heuristic + Gurobi MIP benchmark + plots): `python3 analyze_generated_instances.py`
 - **Table only** (faster, no histogram PNGs): `python3 export_instance_profits.py`
+- Optional: `--output-dir analysis_outputs/v2/upperbound_version` and `--tag v2.5.3` to write tagged CSVs into a subfolder (see `analysis_outputs/README.txt`).
 
-Main output: **`analysis_outputs/experiment_report.csv`** (also writes `summary_by_scenario.csv`; histogram PNGs only with `--with-plots`).
+Main output (default): **`analysis_outputs/experiment_report.csv`** and **`summary_by_scenario.csv`** at the directory given by `--output-dir` (histogram PNGs only with `--with-plots`).

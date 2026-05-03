@@ -31,11 +31,31 @@ def main() -> int:
         default=None,
         help="Output filename tag, e.g. v2.1 -> experiment_report_v2.1.csv",
     )
+    p.add_argument(
+        "--mip-time-limit",
+        type=float,
+        default=20.0,
+        help="Gurobi MIP time limit per instance (seconds)",
+    )
+    p.add_argument(
+        "--lp-time-limit",
+        type=float,
+        default=45.0,
+        help="LP relaxation time limit when MIP has no objective (seconds)",
+    )
+    p.add_argument(
+        "--output-dir",
+        default="analysis_outputs",
+        help="Directory for CSV outputs (default: analysis_outputs)",
+    )
     args = p.parse_args()
     run_experiment(
         instance_glob=args.glob,
         write_plots=args.with_plots,
+        mip_time_limit_s=args.mip_time_limit,
+        lp_time_limit_s=args.lp_time_limit,
         output_tag=args.tag,
+        output_dir=args.output_dir,
     )
     return 0
 
