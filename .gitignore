@@ -3,9 +3,11 @@
 # Unzipped artifacts / macOS metadata
 __MACOSX/
 generated_instances/
+generated_instances_v2/
 
 # Local backup folders created during git operations
 .local_backup_*/
 
 # Local grading outputs
 result.csv
+analysis_outputs/result.csv

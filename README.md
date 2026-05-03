@@ -54,3 +54,11 @@ cp instance0*.txt data/
 python3 OR114-2_midtermProject_exampleCode_grading_program.py
 ```
 
+## Problem 4: Random instances & experiment table
+
+- **Spec & column definitions:** [docs/EXPERIMENT_REPORT.md](docs/EXPERIMENT_REPORT.md)
+- **Full run** (heuristic + Gurobi MIP benchmark + plots): `python3 analyze_generated_instances.py`
+- **Table only** (faster, no histogram PNGs): `python3 export_instance_profits.py`
+
+Main output: **`analysis_outputs/experiment_report.csv`** (a copy is also written as `generated_instances_results.csv`).
+

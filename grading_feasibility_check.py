@@ -152,4 +152,5 @@ if __name__ == '__main__':
             }])], ignore_index=True)
 
     # output result
-    result_df.to_csv('result.csv', index = False)
+    Path("analysis_outputs").mkdir(parents=True, exist_ok=True)
+    result_df.to_csv("analysis_outputs/result.csv", index=False)

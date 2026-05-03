@@ -3,6 +3,8 @@ import os
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
+from typing import NamedTuple, Optional
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -14,6 +16,39 @@ from gurobipy import GRB
 
 DATE_FMT = "%Y/%m/%d %H:%M"
 PLANNING_START = datetime(2023, 1, 1, 0, 0)
+
+# Canonical CSV columns for Problem 4 report / README docs/EXPERIMENT_REPORT.md
+EXPERIMENT_REPORT_COLUMNS = [
+    "instance_path",
+    "scenario",
+    "n_orders",
+    "feasible",
+    "profit_heuristic",
+    "revenue_heuristic",
+    "compensation_heuristic",
+    "n_accepted_heuristic",
+    "runtime_s",
+    "mip_status",
+    "mip_profit",
+    "mip_mipgap",
+    "mip_revenue",
+    "mip_compensation",
+    "mip_n_accepted",
+    "gap_to_opt",
+    "ub_type",
+    "ub_profit",
+    "gap_to_ub",
+    "error_heuristic",
+]
+
+
+class MIPResult(NamedTuple):
+    status: str
+    obj: Optional[float]
+    mipgap: Optional[float]
+    revenue: Optional[float]
+    compensation: Optional[float]
+    n_accepted: Optional[int]
 
 
 def fmt_time(dt: datetime) -> str:
@@ -96,7 +131,7 @@ def compute_R(orders, rate):
 def evaluate(path: str, assignment, relocation):
     nS, nC, nL, nK, nD, B, cars, rate, orders, T = load_instance(path)
     if not isinstance(assignment, list) or len(assignment) != nK:
-        return False, None, "bad assignment length"
+        return False, None, "bad assignment length", None
 
     # group assigned orders by car
     per_car = {cid: [] for cid in cars}
@@ -106,7 +141,7 @@ def evaluate(path: str, assignment, relocation):
         if cid == -1:
             continue
         if cid not in cars:
-            return False, None, f"unknown car {cid}"
+            return False, None, f"unknown car {cid}", None
         per_car[cid].append(oid)
         accepted.add(oid)
 
@@ -114,14 +149,14 @@ def evaluate(path: str, assignment, relocation):
     reloc_by_car = {cid: [] for cid in cars}
     for row in relocation:
         if not (isinstance(row, list) or isinstance(row, tuple)) or len(row) != 4:
-            return False, None, "bad relocation row"
+            return False, None, "bad relocation row", None
         cid, fs, ts, st = row
         if cid not in cars:
-            return False, None, f"unknown car in relocation {cid}"
+            return False, None, f"unknown car in relocation {cid}", None
         try:
             st_dt = parse_time(st)
         except Exception:
-            return False, None, "bad relocation time"
+            return False, None, "bad relocation time", None
         reloc_by_car[cid].append((st_dt, fs, ts))
     for cid in reloc_by_car:
         reloc_by_car[cid].sort(key=lambda x: x[0])
@@ -155,33 +190,39 @@ def evaluate(path: str, assignment, relocation):
         for oid in oids:
             o = orders[oid]
             if not (car_lvl == o.req_level or car_lvl == o.req_level + 1):
-                return False, None, "level incompatible"
+                return False, None, "level incompatible", None
 
             deadline = o.pt - timedelta(minutes=30)
             if deadline < PLANNING_START:
                 deadline = PLANNING_START
             if not apply_moves_until(deadline):
-                return False, None, "bad relocation chain"
+                return False, None, "bad relocation chain", None
             if car_station != o.ps:
-                return False, None, "not at pickup station"
+                return False, None, "not at pickup station", None
             if car_ready > deadline:
-                return False, None, "not ready by deadline"
+                return False, None, "not ready by deadline", None
 
             car_station = o.rs
             car_ready = o.rt + timedelta(hours=4)  # +1h late buffer +3h cleaning
 
         if not apply_moves_until(datetime.max):
-            return False, None, "bad relocation after last order"
+            return False, None, "bad relocation after last order", None
 
     if total_move > B:
-        return False, None, "relocation budget exceeded"
+        return False, None, "relocation budget exceeded", None
 
     R = compute_R(orders, rate)
     revenue = sum(R[oid] for oid in accepted)
     rejected = set(orders.keys()) - accepted
     comp = sum(2 * R[oid] for oid in rejected)
     profit = revenue - comp
-    return True, profit, f"moves={total_move}/{B}"
+    stats = {
+        "revenue_heuristic": float(revenue),
+        "compensation_heuristic": float(comp),
+        "n_accepted_heuristic": int(len(accepted)),
+        "n_orders": int(nK),
+    }
+    return True, profit, f"moves={total_move}/{B}", stats
 
 
 def profit_upper_bound_accept_all(path: str):
@@ -197,12 +238,11 @@ def profit_upper_bound_accept_all(path: str):
     return float(sum(R.values()))
 
 
-def solve_optimal_gurobi(path: str, time_limit_s: float = 20.0):
+def solve_optimal_gurobi(path: str, time_limit_s: float = 20.0) -> MIPResult:
     """
     Solve the instance with a MIP (Gurobi), adapted from problem_1_code.py.
-    Returns: (status_str, obj_val_or_None, mip_gap_or_None)
-    - OPTIMAL: exact optimum
-    - TIME_LIMIT: best incumbent objective if available + MIPGap
+    Returns MIPResult with objective, MIP gap when applicable, and revenue /
+    compensation / accepted order count when an incumbent solution exists.
     """
     nS, nC, nL, nK, nD, B, cars, rate, orders, T = load_instance(path)
 
@@ -307,15 +347,32 @@ def solve_optimal_gurobi(path: str, time_limit_s: float = 20.0):
 
     m.optimize()
 
+    def mip_financials() -> tuple:
+        acc = [k for k in K if x[k].X > 0.5]
+        rev = float(sum(R[k] for k in acc))
+        rej = [k for k in K if k not in acc]
+        comp_v = float(sum(2 * R[k] for k in rej))
+        return rev, comp_v, int(len(acc))
+
     if m.Status == GRB.OPTIMAL:
-        return "OPTIMAL", float(m.ObjVal), 0.0
+        rev, comp_v, na = mip_financials()
+        return MIPResult("OPTIMAL", float(m.ObjVal), 0.0, rev, comp_v, na)
     if m.Status == GRB.TIME_LIMIT:
         if m.SolCount > 0:
-            return "TIME_LIMIT", float(m.ObjVal), float(m.MIPGap)
-        return "TIME_LIMIT_NO_SOLUTION", None, None
+            rev, comp_v, na = mip_financials()
+            return MIPResult(
+                "TIME_LIMIT",
+                float(m.ObjVal),
+                float(m.MIPGap),
+                rev,
+                comp_v,
+                na,
+            )
+        return MIPResult("TIME_LIMIT_NO_SOLUTION", None, None, None, None, None)
     if m.SolCount > 0:
-        return f"STATUS_{m.Status}", float(m.ObjVal), float(m.MIPGap)
-    return f"STATUS_{m.Status}", None, None
+        rev, comp_v, na = mip_financials()
+        return MIPResult(f"STATUS_{m.Status}", float(m.ObjVal), float(m.MIPGap), rev, comp_v, na)
+    return MIPResult(f"STATUS_{m.Status}", None, None, None, None, None)
 
 def scenario_from_filename(fp: str) -> str:
     base = os.path.basename(fp)
@@ -325,49 +382,56 @@ def scenario_from_filename(fp: str) -> str:
     return base.replace(".txt", "")
 
 
-def main():
-    files = sorted(glob.glob("generated_instances/*.txt"))
+def run_experiment(
+    instance_glob: str = "generated_instances_v2/*.txt",
+    *,
+    write_plots: bool = True,
+    mip_time_limit_s: float = 20.0,
+) -> None:
+    """
+    Run heuristic + MIP benchmark on all matching instances; write unified CSVs under
+    analysis_outputs/. See docs/EXPERIMENT_REPORT.md for column definitions.
+    """
+    files = sorted(glob.glob(instance_glob))
     if not files:
-        raise SystemExit("No generated_instances/*.txt found. Unzip generated_instances.zip first.")
+        raise SystemExit(
+            f"No files matched {instance_glob!r}. Unzip generated_instances_v2.zip if needed."
+        )
 
     os.makedirs("analysis_outputs", exist_ok=True)
 
-    rows = []
+    rows: list[dict] = []
     for fp in files:
         t0 = time.time()
+        nK = load_instance(fp)[3]
         feas = False
         profit = None
         err = ""
-        opt_status, opt_profit, opt_mipgap = "NOT_RUN", None, None
+        hstat: Optional[dict] = None
         gap_opt = None
         ub_type, ub_profit, gap_ub = "", None, None
 
         try:
-            # main heuristic
             assignment, relocation = algorithm_module.heuristic_algorithm(fp)
-            feas, profit, info = evaluate(fp, assignment, relocation)
-
+            feas, profit, info, hstat = evaluate(fp, assignment, relocation)
             err = "" if feas else info
         except Exception as e:
-            # If the heuristic itself crashes, we cannot compute anything meaningful.
-            feas, profit, err = False, None, repr(e)
+            feas, profit, err, hstat = False, None, repr(e), None
 
-        # Step 2: try to get optimal by Gurobi (only depends on instance, not on heuristic feasibility)
         try:
-            opt_status, opt_profit, opt_mipgap = solve_optimal_gurobi(fp, time_limit_s=20.0)
+            mip = solve_optimal_gurobi(fp, time_limit_s=mip_time_limit_s)
         except gp.GurobiError as ge:
-            opt_status, opt_profit, opt_mipgap = f"GUROBI_ERROR_{ge.errno}", None, None
-        except Exception as e:
-            opt_status, opt_profit, opt_mipgap = "OPT_ERROR", None, None
+            mip = MIPResult(f"GUROBI_ERROR_{ge.errno}", None, None, None, None, None)
+        except Exception:
+            mip = MIPResult("OPT_ERROR", None, None, None, None, None)
 
-        # Step 3: if optimal not available, compute an upper bound to still report a gap
-        # (use a simple valid UB: profit <= sum_k R_k)
+        opt_profit = mip.obj
+
         if opt_profit is not None:
             ub_type, ub_profit = "OPT", float(opt_profit)
         else:
             ub_type, ub_profit = "ACCEPT_ALL_UB", profit_upper_bound_accept_all(fp)
 
-        # gaps
         if profit is not None and opt_profit is not None:
             denom2 = abs(opt_profit) if abs(opt_profit) > 1e-9 else 1.0
             gap_opt = (opt_profit - profit) / denom2
@@ -381,61 +445,81 @@ def main():
             gap_ub = None
 
         dt = time.time() - t0
+        rel_path = Path(fp).as_posix()
 
         rows.append(
             {
-                "file": fp,
+                "instance_path": rel_path,
                 "scenario": scenario_from_filename(fp),
-                "time_s": dt,
+                "n_orders": int(nK),
                 "feasible": bool(feas),
-                "profit": float(profit) if profit is not None else None,
-                "opt_status": opt_status,
-                "opt_profit": float(opt_profit) if opt_profit is not None else None,
-                "opt_mipgap": float(opt_mipgap) if opt_mipgap is not None else None,
+                "profit_heuristic": float(profit) if profit is not None else None,
+                "revenue_heuristic": hstat["revenue_heuristic"] if hstat else None,
+                "compensation_heuristic": hstat["compensation_heuristic"] if hstat else None,
+                "n_accepted_heuristic": hstat["n_accepted_heuristic"] if hstat else None,
+                "runtime_s": dt,
+                "mip_status": mip.status,
+                "mip_profit": float(mip.obj) if mip.obj is not None else None,
+                "mip_mipgap": float(mip.mipgap) if mip.mipgap is not None else None,
+                "mip_revenue": float(mip.revenue) if mip.revenue is not None else None,
+                "mip_compensation": float(mip.compensation) if mip.compensation is not None else None,
+                "mip_n_accepted": mip.n_accepted,
                 "gap_to_opt": float(gap_opt) if gap_opt is not None else None,
                 "ub_type": ub_type,
                 "ub_profit": float(ub_profit) if ub_profit is not None else None,
                 "gap_to_ub": float(gap_ub) if gap_ub is not None else None,
-                "error": err,
+                "error_heuristic": err,
             }
         )
 
     df = pd.DataFrame(rows)
-    df.to_csv("analysis_outputs/generated_instances_results.csv", index=False)
+    out_main = df.reindex(columns=EXPERIMENT_REPORT_COLUMNS)
+    out_main.to_csv("analysis_outputs/experiment_report.csv", index=False)
+    # Back-compat alias (same content as experiment_report)
+    out_main.to_csv("analysis_outputs/generated_instances_results.csv", index=False)
 
     # Summary table
     summary = (
         df.groupby("scenario")
         .agg(
-            n=("file", "count"),
+            n=("instance_path", "count"),
             feasible_rate=("feasible", "mean"),
-            profit_mean=("profit", "mean"),
-            profit_std=("profit", "std"),
-            opt_profit_mean=("opt_profit", "mean"),
-            opt_profit_std=("opt_profit", "std"),
+            profit_heuristic_mean=("profit_heuristic", "mean"),
+            profit_heuristic_std=("profit_heuristic", "std"),
+            mip_profit_mean=("mip_profit", "mean"),
+            mip_profit_std=("mip_profit", "std"),
             gap_to_opt_mean=("gap_to_opt", "mean"),
             gap_to_opt_std=("gap_to_opt", "std"),
             ub_profit_mean=("ub_profit", "mean"),
             ub_profit_std=("ub_profit", "std"),
             gap_to_ub_mean=("gap_to_ub", "mean"),
             gap_to_ub_std=("gap_to_ub", "std"),
-            time_mean=("time_s", "mean"),
+            runtime_mean=("runtime_s", "mean"),
         )
         .reset_index()
         .sort_values("scenario")
     )
     summary.to_csv("analysis_outputs/summary_by_scenario.csv", index=False)
 
+    if not write_plots:
+        print("Wrote analysis_outputs/experiment_report.csv (and generated_instances_results.csv, summary_by_scenario.csv)")
+        print(summary)
+        return
+
     # Plot: profit histograms per scenario (feasible only)
     scenarios = sorted(df["scenario"].unique())
     for sc in scenarios:
-        sub = df[(df["scenario"] == sc) & (df["feasible"] == True) & (df["profit"].notna())]
+        sub = df[
+            (df["scenario"] == sc)
+            & (df["feasible"] == True)
+            & (df["profit_heuristic"].notna())
+        ]
         if sub.empty:
             continue
         plt.figure(figsize=(7, 4))
-        plt.hist(sub["profit"], bins=10)
+        plt.hist(sub["profit_heuristic"], bins=10)
         plt.title(f"Profit histogram — {sc} (feasible only)")
-        plt.xlabel("Profit")
+        plt.xlabel("Profit (heuristic)")
         plt.ylabel("Count")
         plt.tight_layout()
         plt.savefig(f"analysis_outputs/profit_hist_{sc}.png", dpi=200)
@@ -445,17 +529,21 @@ def main():
     box_data = []
     labels = []
     for sc in scenarios:
-        sub = df[(df["scenario"] == sc) & (df["feasible"] == True) & (df["profit"].notna())]
+        sub = df[
+            (df["scenario"] == sc)
+            & (df["feasible"] == True)
+            & (df["profit_heuristic"].notna())
+        ]
         if sub.empty:
             continue
-        box_data.append(sub["profit"].values)
+        box_data.append(sub["profit_heuristic"].values)
         labels.append(sc)
     if box_data:
         plt.figure(figsize=(10, 5))
         plt.boxplot(box_data, labels=labels, showfliers=False)
         plt.xticks(rotation=25, ha="right")
         plt.title("Profit by scenario (feasible only)")
-        plt.ylabel("Profit")
+        plt.ylabel("Profit (heuristic)")
         plt.tight_layout()
         plt.savefig("analysis_outputs/profit_boxplot_by_scenario.png", dpi=200)
         plt.close()
@@ -471,7 +559,7 @@ def main():
     plt.savefig("analysis_outputs/feasible_rate_by_scenario.png", dpi=200)
     plt.close()
 
-    # Plot: gap-to-opt histogram per scenario (where opt_profit exists)
+    # Plot: gap-to-opt histogram per scenario (where mip solved)
     for sc in scenarios:
         sub = df[
             (df["scenario"] == sc)
@@ -483,13 +571,13 @@ def main():
         plt.figure(figsize=(7, 4))
         plt.hist(sub["gap_to_opt"], bins=10)
         plt.title(f"Gap to optimal — {sc} (where solved)")
-        plt.xlabel("(opt_profit - profit) / |opt_profit|")
+        plt.xlabel("(mip_profit - profit_heuristic) / |mip_profit|")
         plt.ylabel("Count")
         plt.tight_layout()
         plt.savefig(f"analysis_outputs/gap_to_opt_hist_{sc}.png", dpi=200)
         plt.close()
 
-    # Plot: gap-to-UB histogram per scenario (always available if profit computed)
+    # Plot: gap-to-UB histogram per scenario
     for sc in scenarios:
         sub = df[
             (df["scenario"] == sc)
@@ -501,7 +589,7 @@ def main():
         plt.figure(figsize=(7, 4))
         plt.hist(sub["gap_to_ub"], bins=10)
         plt.title(f"Gap to UB — {sc} (feasible only)")
-        plt.xlabel("(ub_profit - profit) / |ub_profit|")
+        plt.xlabel("(ub_profit - profit_heuristic) / |ub_profit|")
         plt.ylabel("Count")
         plt.tight_layout()
         plt.savefig(f"analysis_outputs/gap_to_ub_hist_{sc}.png", dpi=200)
@@ -509,6 +597,10 @@ def main():
 
     print("Wrote outputs to analysis_outputs/")
     print(summary)
+
+
+def main() -> None:
+    run_experiment(write_plots=True)
 
 
 if __name__ == "__main__":

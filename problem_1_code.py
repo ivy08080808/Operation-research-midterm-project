@@ -1,3 +1,4 @@
+import sys
 from gurobipy import *
 from datetime import *
 
@@ -55,7 +56,13 @@ def load_instance(filename):
 
 # Load and parse
 
-INSTANCE = "instance01.txt" 
+INSTANCE = "instance01.txt"
+QUIET = False
+for a in sys.argv[1:]:
+    if a in ("--quiet", "-q"):
+        QUIET = True
+    elif not a.startswith("-"):
+        INSTANCE = a
 
 n_S, n_C, n_L, n_K, n_D, B, cars, rate, orders_raw, T = load_instance(INSTANCE)
 
@@ -100,6 +107,8 @@ for (i, j) in feasible_arcs:
 # Model
 
 m = Model("car_rental")
+if QUIET:
+    m.setParam("OutputFlag", 0)
 
 x      = m.addVars(K,               vtype=GRB.BINARY, name="accept")  # 1 if order k is accepted
 assign = m.addVars(C, K,            vtype=GRB.BINARY, name="assign")  # 1 if car c serves order k
@@ -195,12 +204,23 @@ m.setObjective(profit, GRB.MAXIMIZE)
 
 # Solve
 
-m.optimize()
+solve_ok = True
+_optimize_error = ""
+try:
+    m.optimize()
+except GurobiError as e:
+    solve_ok = False
+    _optimize_error = str(e)
 
 
 # Output
 
-if m.Status == GRB.OPTIMAL:
+if not solve_ok:
+    if QUIET:
+        print(f"{INSTANCE}\tFAILED\t{_optimize_error}")
+    else:
+        print(f"GurobiError: {_optimize_error}")
+elif m.Status == GRB.OPTIMAL:
     accepted = [k for k in K if x[k].X > 0.5]
     rejected  = [k for k in K if x[k].X < 0.5]
 
@@ -208,74 +228,84 @@ if m.Status == GRB.OPTIMAL:
     total_compensation = sum(2 * R[k] for k in rejected)
     total_profit       = total_revenue - total_compensation
 
-    print("\n" + "=" * 60)
-    print("OPTIMAL PLAN".center(60))
-    print("=" * 60)
-    print(f"\n{'Total profit:':35} ${total_profit:>10,.0f}")
-    print(f"{'Revenue (accepted orders):':35} ${total_revenue:>10,.0f}")
-    print(f"{'Compensation (rejected orders):':35} ${total_compensation:>10,.0f}")
-    print(f"\n{'Accepted orders:':35} {accepted}")
-    print(f"{'Rejected orders:':35} {rejected}")
+    if QUIET:
+        print(
+            f"{INSTANCE}\tprofit={total_profit:,.0f}\t"
+            f"revenue={total_revenue:,.0f}\tcompensation={total_compensation:,.0f}\t"
+            f"accepted={len(accepted)}/{len(K)}"
+        )
+    else:
+        print("\n" + "=" * 60)
+        print("OPTIMAL PLAN".center(60))
+        print("=" * 60)
+        print(f"\n{'Total profit:':35} ${total_profit:>10,.0f}")
+        print(f"{'Revenue (accepted orders):':35} ${total_revenue:>10,.0f}")
+        print(f"{'Compensation (rejected orders):':35} ${total_compensation:>10,.0f}")
+        print(f"\n{'Accepted orders:':35} {accepted}")
+        print(f"{'Rejected orders:':35} {rejected}")
 
-    print("\n" + "-" * 60)
-    print("CAR ASSIGNMENT DETAILS")
-    print("-" * 60)
+        print("\n" + "-" * 60)
+        print("CAR ASSIGNMENT DETAILS")
+        print("-" * 60)
 
-    total_travel = 0
+        total_travel = 0
 
-    for c in C:
-        served = [k for k in K if assign[c, k].X > 0.5]
-        if not served:
-            print(f"\nCar {c} (Level {cars[c][0]}, starts at Station {cars[c][1]}): idle")
-            continue
+        for c in C:
+            served = [k for k in K if assign[c, k].X > 0.5]
+            if not served:
+                print(f"\nCar {c} (Level {cars[c][0]}, starts at Station {cars[c][1]}): idle")
+                continue
 
-        # Reconstruct the ordered chain for this car
-        first = [k for k in served if start[c, k].X > 0.5]
-        chain = list(first)
-        while True:
-            cur = chain[-1]
-            nxt = [j for j in arcs_out[cur] if z[c, cur, j].X > 0.5]
-            if not nxt:
-                break
-            chain.append(nxt[0])
+            # Reconstruct the ordered chain for this car
+            first = [k for k in served if start[c, k].X > 0.5]
+            chain = list(first)
+            while True:
+                cur = chain[-1]
+                nxt = [j for j in arcs_out[cur] if z[c, cur, j].X > 0.5]
+                if not nxt:
+                    break
+                chain.append(nxt[0])
 
-        cl = cars[c][0]
-        print(f"\nCar {c} (Level {cl}, starts at Station {cars[c][1]}):")
+            cl = cars[c][0]
+            print(f"\nCar {c} (Level {cl}, starts at Station {cars[c][1]}):")
 
-        # Initial relocation if needed
-        if chain:
-            first_k  = chain[0]
-            init_st  = cars[c][1]
-            ps_first = orders[first_k][1]
-            if init_st != ps_first:
-                mins = T[init_st, ps_first]
-                total_travel += mins
-                print(f"  → Relocate Station {init_st} → Station {ps_first} ({mins} min)")
-
-        for idx_c, k in enumerate(chain):
-            lvl_k, ps_k, rs_k, pt_k, rt_k = orders[k]
-            upgrade = " [UPGRADE]" if cl == lvl_k + 1 else ""
-            print(f"  Order {k:>2}{upgrade}: "
-                  f"pick up Station {ps_k} @ {pt_k.strftime('%Y/%m/%d %H:%M')}, "
-                  f"return Station {rs_k} @ {rt_k.strftime('%Y/%m/%d %H:%M')}  "
-                  f"[revenue: ${R[k]:,.0f}]")
-
-            # Inter-order relocation
-            if idx_c < len(chain) - 1:
-                nxt_k    = chain[idx_c + 1]
-                ps_next  = orders[nxt_k][1]
-                if rs_k != ps_next:
-                    mins       = T[rs_k, ps_next]
+            # Initial relocation if needed
+            if chain:
+                first_k  = chain[0]
+                init_st  = cars[c][1]
+                ps_first = orders[first_k][1]
+                if init_st != ps_first:
+                    mins = T[init_st, ps_first]
                     total_travel += mins
-                    depart     = rt_k + timedelta(hours=4)
-                    arrive     = depart + timedelta(minutes=mins)
-                    print(f"       → Relocate Station {rs_k} → Station {ps_next} "
-                          f"(depart {depart.strftime('%m/%d %H:%M')}, "
-                          f"arrive {arrive.strftime('%m/%d %H:%M')}, {mins} min)")
+                    print(f"  → Relocate Station {init_st} → Station {ps_first} ({mins} min)")
 
-    print(f"\n{'Total relocation time used:':35} {total_travel} / {B} min")
-    print("=" * 60)
+            for idx_c, k in enumerate(chain):
+                lvl_k, ps_k, rs_k, pt_k, rt_k = orders[k]
+                upgrade = " [UPGRADE]" if cl == lvl_k + 1 else ""
+                print(f"  Order {k:>2}{upgrade}: "
+                      f"pick up Station {ps_k} @ {pt_k.strftime('%Y/%m/%d %H:%M')}, "
+                      f"return Station {rs_k} @ {rt_k.strftime('%Y/%m/%d %H:%M')}  "
+                      f"[revenue: ${R[k]:,.0f}]")
+
+                # Inter-order relocation
+                if idx_c < len(chain) - 1:
+                    nxt_k    = chain[idx_c + 1]
+                    ps_next  = orders[nxt_k][1]
+                    if rs_k != ps_next:
+                        mins       = T[rs_k, ps_next]
+                        total_travel += mins
+                        depart     = rt_k + timedelta(hours=4)
+                        arrive     = depart + timedelta(minutes=mins)
+                        print(f"       → Relocate Station {rs_k} → Station {ps_next} "
+                              f"(depart {depart.strftime('%m/%d %H:%M')}, "
+                              f"arrive {arrive.strftime('%m/%d %H:%M')}, {mins} min)")
+
+        print(f"\n{'Total relocation time used:':35} {total_travel} / {B} min")
+        print("=" * 60)
 
 else:
-    print(f"Solver status: {m.Status} — no optimal solution found.")
+    if QUIET:
+        print(f"{INSTANCE}\tstatus={m.Status}\t(no optimal solution)")
+    else:
+        print(f"Solver status: {m.Status} — no optimal solution found.")
 

@@ -74,4 +74,5 @@ if __name__ == '__main__':
                                       'Feasibility': feasibility}])], ignore_index = True)
 
 # output result
-result_df.to_csv('result.csv', index = False)
+os.makedirs("analysis_outputs", exist_ok=True)
+result_df.to_csv("analysis_outputs/result.csv", index=False)
