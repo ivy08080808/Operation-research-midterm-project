@@ -382,11 +382,22 @@ def scenario_from_filename(fp: str) -> str:
     return base.replace(".txt", "")
 
 
+def _tagged_output_path(path: str, tag: Optional[str]) -> str:
+    """Insert _{tag} before the extension, e.g. experiment_report_v2.1.csv"""
+    if not tag:
+        return path
+    directory, fname = os.path.split(path)
+    stem, ext = os.path.splitext(fname)
+    tagged = f"{stem}_{tag}{ext}"
+    return os.path.join(directory, tagged) if directory else tagged
+
+
 def run_experiment(
     instance_glob: str = "generated_instances_v2/*.txt",
     *,
     write_plots: bool = True,
     mip_time_limit_s: float = 20.0,
+    output_tag: Optional[str] = None,
 ) -> None:
     """
     Run heuristic + MIP benchmark on all matching instances; write unified CSVs under
@@ -474,7 +485,8 @@ def run_experiment(
 
     df = pd.DataFrame(rows)
     out_main = df.reindex(columns=EXPERIMENT_REPORT_COLUMNS)
-    out_main.to_csv("analysis_outputs/experiment_report.csv", index=False)
+    out_experiment = _tagged_output_path("analysis_outputs/experiment_report.csv", output_tag)
+    out_main.to_csv(out_experiment, index=False)
 
     # Summary table
     summary = (
@@ -497,10 +509,11 @@ def run_experiment(
         .reset_index()
         .sort_values("scenario")
     )
-    summary.to_csv("analysis_outputs/summary_by_scenario.csv", index=False)
+    out_summary = _tagged_output_path("analysis_outputs/summary_by_scenario.csv", output_tag)
+    summary.to_csv(out_summary, index=False)
 
     if not write_plots:
-        print("Wrote analysis_outputs/experiment_report.csv and summary_by_scenario.csv")
+        print(f"Wrote {out_experiment} and {out_summary}")
         print(summary)
         return
 
@@ -520,7 +533,10 @@ def run_experiment(
         plt.xlabel("Profit (heuristic)")
         plt.ylabel("Count")
         plt.tight_layout()
-        plt.savefig(f"analysis_outputs/profit_hist_{sc}.png", dpi=200)
+        plt.savefig(
+            _tagged_output_path(f"analysis_outputs/profit_hist_{sc}.png", output_tag),
+            dpi=200,
+        )
         plt.close()
 
     # Plot: boxplot across scenarios
@@ -543,7 +559,10 @@ def run_experiment(
         plt.title("Profit by scenario (feasible only)")
         plt.ylabel("Profit (heuristic)")
         plt.tight_layout()
-        plt.savefig("analysis_outputs/profit_boxplot_by_scenario.png", dpi=200)
+        plt.savefig(
+            _tagged_output_path("analysis_outputs/profit_boxplot_by_scenario.png", output_tag),
+            dpi=200,
+        )
         plt.close()
 
     # Plot: feasibility rate bar
@@ -554,7 +573,10 @@ def run_experiment(
     plt.title("Feasible rate by scenario")
     plt.ylabel("Feasible rate")
     plt.tight_layout()
-    plt.savefig("analysis_outputs/feasible_rate_by_scenario.png", dpi=200)
+    plt.savefig(
+        _tagged_output_path("analysis_outputs/feasible_rate_by_scenario.png", output_tag),
+        dpi=200,
+    )
     plt.close()
 
     # Plot: gap-to-opt histogram per scenario (where mip solved)
@@ -572,7 +594,10 @@ def run_experiment(
         plt.xlabel("(mip_profit - profit_heuristic) / |mip_profit|")
         plt.ylabel("Count")
         plt.tight_layout()
-        plt.savefig(f"analysis_outputs/gap_to_opt_hist_{sc}.png", dpi=200)
+        plt.savefig(
+            _tagged_output_path(f"analysis_outputs/gap_to_opt_hist_{sc}.png", output_tag),
+            dpi=200,
+        )
         plt.close()
 
     # Plot: gap-to-UB histogram per scenario
@@ -590,15 +615,48 @@ def run_experiment(
         plt.xlabel("(ub_profit - profit_heuristic) / |ub_profit|")
         plt.ylabel("Count")
         plt.tight_layout()
-        plt.savefig(f"analysis_outputs/gap_to_ub_hist_{sc}.png", dpi=200)
+        plt.savefig(
+            _tagged_output_path(f"analysis_outputs/gap_to_ub_hist_{sc}.png", output_tag),
+            dpi=200,
+        )
         plt.close()
 
-    print("Wrote outputs to analysis_outputs/")
+    print(f"Wrote tagged outputs under analysis_outputs/ (tag={output_tag!r})")
     print(summary)
 
 
 def main() -> None:
-    run_experiment(write_plots=True)
+    import argparse
+
+    ap = argparse.ArgumentParser(description="Run full experiment (heuristic + MIP) and write analysis_outputs/.")
+    ap.add_argument(
+        "--glob",
+        default="generated_instances_v2/*.txt",
+        help="Instance file glob",
+    )
+    ap.add_argument(
+        "--no-plots",
+        action="store_true",
+        help="Skip PNG figures (CSV only)",
+    )
+    ap.add_argument(
+        "--mip-time-limit",
+        type=float,
+        default=20.0,
+        help="Gurobi time limit per instance (seconds)",
+    )
+    ap.add_argument(
+        "--tag",
+        default=None,
+        help="Suffix for output files, e.g. v2.1",
+    )
+    args = ap.parse_args()
+    run_experiment(
+        instance_glob=args.glob,
+        write_plots=not args.no_plots,
+        mip_time_limit_s=args.mip_time_limit,
+        output_tag=args.tag,
+    )
 
 
 if __name__ == "__main__":

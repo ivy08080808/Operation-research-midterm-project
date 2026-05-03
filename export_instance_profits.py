@@ -26,8 +26,17 @@ def main() -> int:
         default="generated_instances_v2/*.txt",
         help="Instance file glob (default: generated_instances_v2/*.txt)",
     )
+    p.add_argument(
+        "--tag",
+        default=None,
+        help="Output filename tag, e.g. v2.1 -> experiment_report_v2.1.csv",
+    )
     args = p.parse_args()
-    run_experiment(instance_glob=args.glob, write_plots=args.with_plots)
+    run_experiment(
+        instance_glob=args.glob,
+        write_plots=args.with_plots,
+        output_tag=args.tag,
+    )
     return 0
 
 
