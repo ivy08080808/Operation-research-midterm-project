@@ -21,8 +21,7 @@
 
 輸出檔案：
 
-- **`analysis_outputs/experiment_report.csv`** — 主表（欄位見下）。
-- **`analysis_outputs/generated_instances_results.csv`** — 與主表**內容相同**的別名（給舊流程／Notebook 用）。
+- **`analysis_outputs/experiment_report.csv`** — 唯一主表（欄位見下）。
 - **`analysis_outputs/summary_by_scenario.csv`** — 依 scenario 聚合的平均值／標準差。
 
 ## 欄位定義（單一 instance 一列）

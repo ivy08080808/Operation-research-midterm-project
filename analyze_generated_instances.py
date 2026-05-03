@@ -475,8 +475,6 @@ def run_experiment(
     df = pd.DataFrame(rows)
     out_main = df.reindex(columns=EXPERIMENT_REPORT_COLUMNS)
     out_main.to_csv("analysis_outputs/experiment_report.csv", index=False)
-    # Back-compat alias (same content as experiment_report)
-    out_main.to_csv("analysis_outputs/generated_instances_results.csv", index=False)
 
     # Summary table
     summary = (
@@ -502,7 +500,7 @@ def run_experiment(
     summary.to_csv("analysis_outputs/summary_by_scenario.csv", index=False)
 
     if not write_plots:
-        print("Wrote analysis_outputs/experiment_report.csv (and generated_instances_results.csv, summary_by_scenario.csv)")
+        print("Wrote analysis_outputs/experiment_report.csv and summary_by_scenario.csv")
         print(summary)
         return
 

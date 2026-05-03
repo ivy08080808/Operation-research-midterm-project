@@ -1,4 +1,5 @@
 .DS_Store
+**/.DS_Store
 
 # Unzipped artifacts / macOS metadata
 __MACOSX/
@@ -11,3 +12,8 @@ generated_instances_v2/
 # Local grading outputs
 result.csv
 analysis_outputs/result.csv
+
+# Editor / notebooks
+.ipynb_checkpoints/
+*.swp
+*.swo

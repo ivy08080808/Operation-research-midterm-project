@@ -2,8 +2,8 @@
 """
 Thin wrapper: runs the same experiment pipeline as analyze_generated_instances.
 
-Writes the unified table to analysis_outputs/experiment_report.csv (and the
-back-compat copy generated_instances_results.csv). No separate MIP-via-problem_1_code path.
+Writes the unified table to analysis_outputs/experiment_report.csv (same pipeline
+as analyze_generated_instances). No separate MIP-via-problem_1_code path.
 
 By default this skips figure generation (faster). Pass --with-plots to also write histograms.
 """
