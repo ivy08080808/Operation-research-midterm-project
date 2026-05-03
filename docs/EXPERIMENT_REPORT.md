@@ -1,55 +1,55 @@
-# Problem 4：實驗輸出設計說明（`experiment_report.csv`）
+# Problem 4: Experiment output design (`experiment_report.csv`)
 
-本文件說明 **`analysis_outputs/experiment_report.csv`** 如何產生、欄位意義、以及與 `export_instance_profits.py` / `analyze_generated_instances.py` 的關係，避免之後重讀程式碼。
+This document explains how **`analysis_outputs/experiment_report.csv`** is produced, what each column means, and how it relates to `export_instance_profits.py` and `analyze_generated_instances.py`, so you do not have to re-read the code later.
 
-## 目的（對齊作業 PDF Problem 4）
+## Purpose (aligned with Assignment PDF Problem 4)
 
-- **Heuristic**：`algorithm_module.heuristic_algorithm` 對每個 instance 產生可行解（若格式／可行性檢查通過），並計算 **profit_heuristic** 與拆解。
-- **Benchmark（小規模可用時）**：同一支程式內用 **Gurobi 完整 MIP**（與 `problem_1_code.py` 同構）求 **mip_profit**；成功時 **`ub_type = OPT`**，且 **gap_to_opt** 為 heuristic 與 MIP 最佳解的相對差距。
-- **Benchmark（MIP 無法解時）**：例如授權／規模限制，則 **無 mip_profit**，改用 **`ACCEPT_ALL_UB`**（數學上合法的上界：`sum_k R_k`，見程式 `profit_upper_bound_accept_all`），並計算 **gap_to_ub**。這**不是** LP 鬆弛最佳解，而是作業 PDF 所說「大 instance 時可用上界／簡單法當基準」的一種實作。
+- **Heuristic**: `algorithm_module.heuristic_algorithm` builds a feasible solution for each instance (when format and feasibility checks pass), and reports **profit_heuristic** and its breakdown.
+- **Benchmark (when instances are small enough)**: The same driver runs a **full Gurobi MIP** (isomorphic to `problem_1_code.py`) to obtain **mip_profit**; on success **`ub_type = OPT`**, and **gap_to_opt** is the relative gap between the heuristic and the MIP optimal solution.
+- **Benchmark (when MIP cannot be solved)**: e.g. license or size limits, so there is **no mip_profit**; use **`ACCEPT_ALL_UB`** (a valid upper bound: `sum_k R_k`, see `profit_upper_bound_accept_all` in code), and report **gap_to_ub**. This is **not** an LP relaxation optimum; it implements the assignment PDF idea of using a simple upper bound as a reference on large instances.
 
-> 舊版曾另跑 `problem_1_code.py` 子程序寫 `instance_profits.csv`，與分析腳本重複且易不一致；現已**統一**由 `analyze_generated_instances.run_experiment` 產出。
+> Older versions ran `problem_1_code.py` separately to write `instance_profits.csv`, which duplicated the analysis pipeline and could drift; output is now **unified** under `analyze_generated_instances.run_experiment`.
 
-## 如何產生檔案
+## How to generate files
 
-| 指令 | 行為 |
-|------|------|
-| `python3 analyze_generated_instances.py` | 寫入 CSV + **所有** PNG 圖（histogram 等） |
-| `python3 export_instance_profits.py` | 預設**只寫 CSV**（較快），不畫圖 |
-| `python3 export_instance_profits.py --with-plots` | 等同完整 analyze（含圖） |
-| `python3 export_instance_profits.py --glob 'generated_instances_v2/*.txt'` | 指定 instance 檔案 glob |
+| Command | Behavior |
+|---------|----------|
+| `python3 analyze_generated_instances.py` | Writes CSV + **all** PNG plots (histograms, etc.) |
+| `python3 export_instance_profits.py` | By default **CSV only** (faster), no plots |
+| `python3 export_instance_profits.py --with-plots` | Same as the full analyze run (includes plots) |
+| `python3 export_instance_profits.py --glob 'generated_instances_v2/*.txt'` | Custom glob for instance files |
 
-輸出檔案：
+Output files:
 
-- **`analysis_outputs/experiment_report.csv`** — 唯一主表（欄位見下）。
-- **`analysis_outputs/summary_by_scenario.csv`** — 依 scenario 聚合的平均值／標準差。
+- **`analysis_outputs/experiment_report.csv`** — primary table (columns below).
+- **`analysis_outputs/summary_by_scenario.csv`** — per-scenario aggregates (means / standard deviations).
 
-## 欄位定義（單一 instance 一列）
+## Column definitions (one row per instance)
 
-欄位順序由程式常數 `EXPERIMENT_REPORT_COLUMNS` 固定，便於報告貼上與版本對照。
+Column order is fixed by the constant `EXPERIMENT_REPORT_COLUMNS` for stable reporting and diffs.
 
-| 欄位 | 說明 |
-|------|------|
-| `instance_path` | 相對於專案根目錄的路徑（例如 `generated_instances_v2/S1_baseline_01.txt`） |
-| `scenario` | 由檔名推得的 scenario 前綴（例如 `S1_baseline`） |
-| `n_orders` | 訂單數 `nK` |
-| `feasible` | Heuristic 解是否通過 `evaluate`（時間窗、等級、調度、預算等） |
-| `profit_heuristic` | 可行時之目標值；不可行為空 |
-| `revenue_heuristic` | 可行時：接受訂單營收之和 |
-| `compensation_heuristic` | 可行時：拒單賠償之和 |
-| `n_accepted_heuristic` | 可行時：接受訂單筆數 |
-| `runtime_s` | 該 instance 整段流程（heuristic + MIP）之秒數 |
-| `mip_status` | Gurobi 狀態字串（`OPTIMAL`、`GUROBI_ERROR_10010` 等） |
-| `mip_profit` | MIP 目標值；無解或錯誤為空 |
-| `mip_mipgap` | 若有 incumbent 可能有的 MIP gap；否則空 |
-| `mip_revenue` / `mip_compensation` / `mip_n_accepted` | 僅在 MIP 有 incumbent（可讀出 x）時填入 |
-| `gap_to_opt` | 僅当 **mip_profit** 存在且 **profit_heuristic** 存在：`(mip_profit - profit_heuristic) / |mip_profit|`（避免除零時分母用 1） |
-| `ub_type` | `OPT`（用最佳解當上界）或 `ACCEPT_ALL_UB` |
-| `ub_profit` | 所用上界之數值 |
-| `gap_to_ub` | `(ub_profit - profit_heuristic) / |ub_profit|`（heuristic 可行且 ub 存在時） |
-| `error_heuristic` | Heuristic 不可行或例外時的說明字串 |
+| Column | Description |
+|--------|-------------|
+| `instance_path` | Path relative to the repo root (e.g. `generated_instances_v2/S1_baseline_01.txt`) |
+| `scenario` | Scenario prefix inferred from the filename (e.g. `S1_baseline`) |
+| `n_orders` | Number of orders `nK` |
+| `feasible` | Whether the heuristic solution passes `evaluate` (time windows, level, dispatch, budget, etc.) |
+| `profit_heuristic` | Objective when feasible; empty if infeasible |
+| `revenue_heuristic` | When feasible: sum of revenue from accepted orders |
+| `compensation_heuristic` | When feasible: sum of rejection compensation |
+| `n_accepted_heuristic` | When feasible: number of accepted orders |
+| `runtime_s` | Wall-clock seconds for that instance (heuristic + MIP) |
+| `mip_status` | Gurobi status string (`OPTIMAL`, `GUROBI_ERROR_10010`, etc.) |
+| `mip_profit` | MIP objective; empty if no solution or error |
+| `mip_mipgap` | MIP gap when an incumbent exists; otherwise empty |
+| `mip_revenue` / `mip_compensation` / `mip_n_accepted` | Filled only when the MIP has an incumbent (assignment variables readable) |
+| `gap_to_opt` | Only when **mip_profit** and **profit_heuristic** exist: `(mip_profit - profit_heuristic) / |mip_profit|` (denominator clamped to 1 to avoid division by zero) |
+| `ub_type` | `OPT` (optimum as the bound) or `ACCEPT_ALL_UB` |
+| `ub_profit` | Numeric value of the bound used |
+| `gap_to_ub` | `(ub_profit - profit_heuristic) / |ub_profit|` when the heuristic is feasible and the bound exists |
+| `error_heuristic` | Message when the heuristic is infeasible or raises |
 
-## 維護注意
+## Maintenance notes
 
-- 若修改 MIP 模型，請**同步** `problem_1_code.py` 與 `analyze_generated_instances.solve_optimal_gurobi`，避免「手交報告 MIP」與「實驗 MIP」不一致。
-- 新增輸出欄位時：更新 `EXPERIMENT_REPORT_COLUMNS`、本文件、以及報告中的表格說明。
+- If you change the MIP model, keep **`problem_1_code.py`** and **`analyze_generated_instances.solve_optimal_gurobi`** in sync so the “hand-in MIP” and the “experiment MIP” do not diverge.
+- When adding columns: update `EXPERIMENT_REPORT_COLUMNS`, this document, and any tables in your written report.

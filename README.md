@@ -2,22 +2,22 @@
 
 This repository contains code for the OR114-2 Spring 2026 midterm project.
 
-## Repository layout（給未來自己／隊友）
+## Repository layout
 
-| 區塊 | 說明 |
-|------|------|
-| 根目錄 `.py` | 作業／評分用程式：`algorithm_module.py`（必交）、`problem_1_code.py`、`analyze_generated_instances.py`、`grading_feasibility_check.py` 等 |
-| `docs/` | 實驗說明 [`EXPERIMENT_REPORT.md`](docs/EXPERIMENT_REPORT.md)；情境摘要 PDF：`scenario_summary.pdf` |
-| `analysis_outputs/` | **可重新產生**：實驗 CSV（勿手改；跑腳本重算） |
-| `generated_instances_v2.zip` | 隨機 instance 壓縮檔；解壓到 `generated_instances_v2/`（**不進版控**，見 `.gitignore`） |
-| 名稱含 `exampleCode` / `OR114-2_midtermProject_example*` | 助教範例，與你正式提交的 `algorithm_module.py` 分開 |
+| Area | Contents |
+|------|----------|
+| Root `*.py` | Assignment / grading scripts: `algorithm_module.py` (required submission), `problem_1_code.py`, `analyze_generated_instances.py`, `grading_feasibility_check.py`, etc. |
+| `docs/` | Experiment notes [`EXPERIMENT_REPORT.md`](docs/EXPERIMENT_REPORT.md); scenario summary PDF: `scenario_summary.pdf` |
+| `analysis_outputs/` | **Regenerable** experiment CSV (do not edit by hand; re-run scripts) |
+| `generated_instances_v2.zip` | Archive of random instances; extract to `generated_instances_v2/` (**not tracked**, see `.gitignore`) |
+| Names containing `exampleCode` / `OR114-2_midtermProject_example*` | Course staff examples, separate from your submitted `algorithm_module.py` |
 
-本地若出現 `__MACOSX/`、`.local_backup_*/`：多為解 zip 或 git 工具留下，**可刪**；已在 `.gitignore` 忽略。
+If you see `__MACOSX/` or `.local_backup_*/` locally, they often come from unzip or git tooling—**safe to delete**; they are listed in `.gitignore`.
 
 ## Files
 
 - `OR114-2_midtermProject.pdf`: project specification.
-- `instance01.txt` ~ `instance05.txt`: example instances (若根目錄沒有，請從課程／助教管道取得；格式同 hidden tests)。
+- `instance01.txt` ~ `instance05.txt`: example instances (if missing in the repo root, obtain from the course; same format as hidden tests).
 - `problem_1_code.py`: a Gurobi MIP model used for Problem 1 (optimal solve for small instance).
 - `algorithm_module.py`: **Problem 2 submission file** (heuristic algorithm).
 
@@ -72,5 +72,4 @@ python3 OR114-2_midtermProject_exampleCode_grading_program.py
 - **Full run** (heuristic + Gurobi MIP benchmark + plots): `python3 analyze_generated_instances.py`
 - **Table only** (faster, no histogram PNGs): `python3 export_instance_profits.py`
 
-Main output: **`analysis_outputs/experiment_report.csv`**（另會寫入 `summary_by_scenario.csv`；跑 `--with-plots` 時才會出 histogram PNG）。
-
+Main output: **`analysis_outputs/experiment_report.csv`** (also writes `summary_by_scenario.csv`; histogram PNGs only with `--with-plots`).
