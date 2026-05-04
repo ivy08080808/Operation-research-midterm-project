@@ -38,8 +38,10 @@ See also: ``docs/EXPERIMENT_REPORT.md``, ``export_instance_profits.py``,
 ``analysis_outputs/README.txt``.
 """
 
+import csv
 import glob
 import os
+import sys
 import time
 from functools import lru_cache
 from dataclasses import dataclass
@@ -80,6 +82,57 @@ EXPERIMENT_REPORT_COLUMNS = [
     "ub_profit",
     "gap_to_ub",
     "error_heuristic",
+]
+
+# Shorter per-instance CSV (heuristic vs MIP / UB, no MIP revenue breakdown)
+EXPERIMENT_REPORT_COLUMNS_MINIMAL = [
+    "instance_path",
+    "scenario",
+    "n_orders",
+    "feasible",
+    "profit_heuristic",
+    "mip_status",
+    "mip_profit",
+    "gap_to_opt",
+    "ub_type",
+    "ub_profit",
+    "gap_to_ub",
+    "gurobi_time/heuristic_time",
+    "error_heuristic",
+]
+
+# v3.1 slim report: user-facing Gurobi labels + combined timing string
+EXPERIMENT_REPORT_COLUMNS_V31 = [
+    "instance_path",
+    "feasible",
+    "profit_heuristic",
+    "Gurobi_status",
+    "Gurobi_profit",
+    "gap_to_opt",
+    "Gurobi_time/algorithm_time",
+    "error_heuristic",
+]
+
+# Per-scenario summary when csv_columns=='v31': mean/std aligned with EXPERIMENT_REPORT_COLUMNS_V31
+SUMMARY_BY_SCENARIO_COLUMNS_V31 = [
+    "scenario",
+    "n",
+    "feasible_mean",
+    "feasible_std",
+    "profit_heuristic_mean",
+    "profit_heuristic_std",
+    "Gurobi_OPTIMAL_rate_mean",
+    "Gurobi_OPTIMAL_rate_std",
+    "Gurobi_profit_mean",
+    "Gurobi_profit_std",
+    "gap_to_opt_mean",
+    "gap_to_opt_std",
+    "Gurobi_time_mean",
+    "Gurobi_time_std",
+    "algorithm_time_mean",
+    "algorithm_time_std",
+    "error_heuristic_nonempty_mean",
+    "error_heuristic_nonempty_std",
 ]
 
 
@@ -485,7 +538,9 @@ def solve_optimal_gurobi(path: str, time_limit_s: float = 20.0) -> MIPResult:
     m, K, C, R, x, assign, start, end_v, z, orders, cars, T, B = _build_car_rental_model(
         path, continuous_relaxation=False
     )
-    m.Params.TimeLimit = float(time_limit_s)
+    # Gurobi default TimeLimit is effectively unlimited; 0 or negative => do not cap.
+    if float(time_limit_s) > 0:
+        m.Params.TimeLimit = float(time_limit_s)
 
     m.optimize()
 
@@ -525,7 +580,8 @@ def solve_lp_relaxation_gurobi(path: str, time_limit_s: float = 45.0) -> Optiona
     """
     try:
         m, K, _C, R, x, *_ = _build_car_rental_model(path, continuous_relaxation=True)
-        m.Params.TimeLimit = float(time_limit_s)
+        if float(time_limit_s) > 0:
+            m.Params.TimeLimit = float(time_limit_s)
         m.Params.Method = GRB.METHOD_AUTO
         m.optimize()
     except gp.GurobiError:
@@ -631,7 +687,11 @@ def solve_lp_relaxation_pulp(path: str, time_limit_s: float = 60.0) -> Optional[
 
         prob += pulp.lpSum(R[k] * x[k] - 2 * R[k] * (1 - x[k]) for k in K)
 
-        solver = pulp.PULP_CBC_CMD(msg=False, timeLimit=int(max(1.0, time_limit_s)))
+        if float(time_limit_s) > 0:
+            cbc_tl = int(max(1.0, time_limit_s))
+        else:
+            cbc_tl = 604800  # 7d cap for CBC when "unlimited" requested
+        solver = pulp.PULP_CBC_CMD(msg=False, timeLimit=cbc_tl)
         prob.solve(solver)
 
         if prob.status != pulp.LpStatusOptimal:
@@ -661,14 +721,77 @@ def _tagged_output_path(path: str, tag: Optional[str]) -> str:
     return os.path.join(directory, tagged) if directory else tagged
 
 
+def _try_raise_process_priority() -> None:
+    """
+    Best-effort: request higher CPU scheduling priority (Unix/macOS).
+    May no-op without permission (negative nice often requires admin).
+    """
+    try:
+        if hasattr(os, "setpriority"):
+            cur = os.getpriority(os.PRIO_PROCESS, 0)
+            os.setpriority(os.PRIO_PROCESS, 0, cur - 5)
+    except (OSError, AttributeError, ValueError):
+        pass
+    try:
+        if hasattr(os, "nice"):
+            os.nice(-1)
+    except (OSError, AttributeError):
+        pass
+
+
+def _experiment_csv_fieldnames(csv_columns: str) -> list[str]:
+    if csv_columns == "minimal":
+        return list(EXPERIMENT_REPORT_COLUMNS_MINIMAL)
+    if csv_columns == "full":
+        return list(EXPERIMENT_REPORT_COLUMNS)
+    if csv_columns == "v31":
+        return list(EXPERIMENT_REPORT_COLUMNS_V31)
+    raise ValueError(
+        f"csv_columns must be 'full', 'minimal', or 'v31', got {csv_columns!r}"
+    )
+
+
+def _internal_row_to_csv_row(row: dict, csv_columns: str) -> dict:
+    """Map one accumulated internal row to the flat dict written to experiment_report."""
+    if csv_columns == "minimal":
+        out: dict = {}
+        for c in EXPERIMENT_REPORT_COLUMNS_MINIMAL:
+            if c == "gurobi_time/heuristic_time":
+                gts = float(row["gurobi_time_s"])
+                ats = float(row["algorithm_time_s"])
+                out[c] = f"{gts:.6f}/{ats:.6f}"
+            else:
+                out[c] = row.get(c)
+        return out
+    if csv_columns == "full":
+        return {c: row.get(c) for c in EXPERIMENT_REPORT_COLUMNS}
+    if csv_columns == "v31":
+        gts = float(row["gurobi_time_s"])
+        ats = float(row["algorithm_time_s"])
+        return {
+            "instance_path": row["instance_path"],
+            "feasible": row["feasible"],
+            "profit_heuristic": row["profit_heuristic"],
+            "Gurobi_status": row["mip_status"],
+            "Gurobi_profit": row["mip_profit"],
+            "gap_to_opt": row["gap_to_opt"],
+            "Gurobi_time/algorithm_time": f"{gts:.6f}/{ats:.6f}",
+            "error_heuristic": row["error_heuristic"],
+        }
+    raise ValueError(f"csv_columns must be 'full', 'minimal', or 'v31', got {csv_columns!r}")
+
+
 def run_experiment(
     instance_glob: str = "generated_instances_v2/*.txt",
     *,
-    write_plots: bool = True,
+    write_plots: bool = False,
     mip_time_limit_s: float = 20.0,
     lp_time_limit_s: float = 45.0,
     output_tag: Optional[str] = None,
     output_dir: str = "analysis_outputs",
+    csv_columns: str = "full",
+    stream_csv: bool = True,
+    high_priority: bool = False,
 ) -> None:
     """
     Run heuristic + MIP benchmark on all matching instances; write unified CSVs under
@@ -681,6 +804,25 @@ def run_experiment(
         )
 
     os.makedirs(output_dir, exist_ok=True)
+
+    if high_priority:
+        _try_raise_process_priority()
+
+    out_experiment = _tagged_output_path(
+        os.path.join(output_dir, "experiment_report.csv"), output_tag
+    )
+
+    csv_fh = None
+    csv_writer: Optional[csv.DictWriter] = None
+    if stream_csv:
+        csv_fh = open(out_experiment, "w", newline="", encoding="utf-8")
+        csv_writer = csv.DictWriter(
+            csv_fh,
+            fieldnames=_experiment_csv_fieldnames(csv_columns),
+            extrasaction="ignore",
+        )
+        csv_writer.writeheader()
+        csv_fh.flush()
 
     rows: list[dict] = []
     for fp in files:
@@ -700,6 +842,9 @@ def run_experiment(
         except Exception as e:
             feas, profit, err, hstat = False, None, repr(e), None
 
+        t_after_algorithm = time.time()
+        algorithm_time_s = t_after_algorithm - t0
+
         try:
             mip = solve_optimal_gurobi(fp, time_limit_s=mip_time_limit_s)
         except gp.GurobiError as ge:
@@ -714,11 +859,14 @@ def run_experiment(
         else:
             lp_ub: Optional[float] = None
             lp_tag = ""
+            if float(lp_time_limit_s) > 0:
+                lp_tl_gurobi = max(25.0, float(lp_time_limit_s))
+                if float(mip_time_limit_s) > 0:
+                    lp_tl_gurobi = max(lp_tl_gurobi, float(mip_time_limit_s) * 1.5)
+            else:
+                lp_tl_gurobi = 0.0
             try:
-                lp_ub = solve_lp_relaxation_gurobi(
-                    fp,
-                    time_limit_s=max(25.0, float(lp_time_limit_s), float(mip_time_limit_s) * 1.5),
-                )
+                lp_ub = solve_lp_relaxation_gurobi(fp, time_limit_s=lp_tl_gurobi)
                 if lp_ub is not None:
                     lp_tag = "LP_RELAX"
             except gp.GurobiError:
@@ -727,10 +875,13 @@ def run_experiment(
                 lp_ub = None
             if lp_ub is None:
                 try:
-                    lp_ub = solve_lp_relaxation_pulp(
-                        fp,
-                        time_limit_s=max(60.0, float(lp_time_limit_s), float(mip_time_limit_s) * 2.0),
-                    )
+                    if float(lp_time_limit_s) > 0:
+                        lp_tl_pulp = max(60.0, float(lp_time_limit_s))
+                        if float(mip_time_limit_s) > 0:
+                            lp_tl_pulp = max(lp_tl_pulp, float(mip_time_limit_s) * 2.0)
+                    else:
+                        lp_tl_pulp = 0.0
+                    lp_ub = solve_lp_relaxation_pulp(fp, time_limit_s=lp_tl_pulp)
                     if lp_ub is not None:
                         lp_tag = "LP_RELAX_CBC"
                 except Exception:
@@ -761,7 +912,9 @@ def run_experiment(
         else:
             gap_ub = None
 
-        dt = time.time() - t0
+        t_end = time.time()
+        dt = t_end - t0
+        gurobi_time_s = t_end - t_after_algorithm
         rel_path = Path(fp).as_posix()
 
         rows.append(
@@ -775,6 +928,8 @@ def run_experiment(
                 "compensation_heuristic": hstat["compensation_heuristic"] if hstat else None,
                 "n_accepted_heuristic": hstat["n_accepted_heuristic"] if hstat else None,
                 "runtime_s": dt,
+                "algorithm_time_s": algorithm_time_s,
+                "gurobi_time_s": gurobi_time_s,
                 "mip_status": mip.status,
                 "mip_profit": float(mip.obj) if mip.obj is not None else None,
                 "mip_mipgap": float(mip.mipgap) if mip.mipgap is not None else None,
@@ -789,34 +944,117 @@ def run_experiment(
             }
         )
 
+        if stream_csv and csv_writer is not None and csv_fh is not None:
+            csv_writer.writerow(_internal_row_to_csv_row(rows[-1], csv_columns))
+            csv_fh.flush()
+            r = rows[-1]
+            print(
+                f"[{len(rows)}/{len(files)}] {rel_path}\tfeasible={r['feasible']}\t"
+                f"profit_h={r['profit_heuristic']}\tmip={r['mip_status']}\t"
+                f"obj={r['mip_profit']}\tgap={r['gap_to_opt']}",
+                flush=True,
+                file=sys.stderr,
+            )
+
+    if stream_csv and csv_fh is not None:
+        csv_fh.close()
+        csv_fh = None
+
     df = pd.DataFrame(rows)
-    out_main = df.reindex(columns=EXPERIMENT_REPORT_COLUMNS)
-    out_experiment = _tagged_output_path(
-        os.path.join(output_dir, "experiment_report.csv"), output_tag
-    )
-    out_main.to_csv(out_experiment, index=False)
+    if csv_columns == "minimal":
+        gt_ht = (
+            df["gurobi_time_s"].map(lambda x: f"{float(x):.6f}")
+            + "/"
+            + df["algorithm_time_s"].map(lambda x: f"{float(x):.6f}")
+        )
+        out_main = df.assign(**{"gurobi_time/heuristic_time": gt_ht}).reindex(
+            columns=EXPERIMENT_REPORT_COLUMNS_MINIMAL
+        )
+    elif csv_columns == "full":
+        _cols = EXPERIMENT_REPORT_COLUMNS
+        out_main = df.reindex(columns=_cols)
+    elif csv_columns == "v31":
+        gt_at = (
+            df["gurobi_time_s"].map(lambda x: f"{float(x):.6f}")
+            + "/"
+            + df["algorithm_time_s"].map(lambda x: f"{float(x):.6f}")
+        )
+        out_main = pd.DataFrame(
+            {
+                "instance_path": df["instance_path"],
+                "feasible": df["feasible"],
+                "profit_heuristic": df["profit_heuristic"],
+                "Gurobi_status": df["mip_status"],
+                "Gurobi_profit": df["mip_profit"],
+                "gap_to_opt": df["gap_to_opt"],
+                "Gurobi_time/algorithm_time": gt_at,
+                "error_heuristic": df["error_heuristic"],
+            }
+        )
+        out_main = out_main.reindex(columns=EXPERIMENT_REPORT_COLUMNS_V31)
+    else:
+        raise ValueError(
+            f"csv_columns must be 'full', 'minimal', or 'v31', got {csv_columns!r}"
+        )
+    if not stream_csv:
+        out_main.to_csv(out_experiment, index=False)
 
     # Summary table
-    summary = (
-        df.groupby("scenario")
-        .agg(
-            n=("instance_path", "count"),
-            feasible_rate=("feasible", "mean"),
-            profit_heuristic_mean=("profit_heuristic", "mean"),
-            profit_heuristic_std=("profit_heuristic", "std"),
-            mip_profit_mean=("mip_profit", "mean"),
-            mip_profit_std=("mip_profit", "std"),
-            gap_to_opt_mean=("gap_to_opt", "mean"),
-            gap_to_opt_std=("gap_to_opt", "std"),
-            ub_profit_mean=("ub_profit", "mean"),
-            ub_profit_std=("ub_profit", "std"),
-            gap_to_ub_mean=("gap_to_ub", "mean"),
-            gap_to_ub_std=("gap_to_ub", "std"),
-            runtime_mean=("runtime_s", "mean"),
+    if csv_columns == "v31":
+        dsum = df.assign(
+            _gurobi_optimal=(df["mip_status"].astype(str) == "OPTIMAL").astype(float),
+            _err_nonempty=(
+                df["error_heuristic"].fillna("").astype(str).str.strip() != ""
+            ).astype(float),
         )
-        .reset_index()
-        .sort_values("scenario")
-    )
+        summary = (
+            dsum.groupby("scenario")
+            .agg(
+                n=("instance_path", "count"),
+                feasible_mean=("feasible", "mean"),
+                feasible_std=("feasible", "std"),
+                profit_heuristic_mean=("profit_heuristic", "mean"),
+                profit_heuristic_std=("profit_heuristic", "std"),
+                Gurobi_OPTIMAL_rate_mean=("_gurobi_optimal", "mean"),
+                Gurobi_OPTIMAL_rate_std=("_gurobi_optimal", "std"),
+                Gurobi_profit_mean=("mip_profit", "mean"),
+                Gurobi_profit_std=("mip_profit", "std"),
+                gap_to_opt_mean=("gap_to_opt", "mean"),
+                gap_to_opt_std=("gap_to_opt", "std"),
+                Gurobi_time_mean=("gurobi_time_s", "mean"),
+                Gurobi_time_std=("gurobi_time_s", "std"),
+                algorithm_time_mean=("algorithm_time_s", "mean"),
+                algorithm_time_std=("algorithm_time_s", "std"),
+                error_heuristic_nonempty_mean=("_err_nonempty", "mean"),
+                error_heuristic_nonempty_std=("_err_nonempty", "std"),
+            )
+            .reset_index()
+            .sort_values("scenario")
+        )
+        summary = summary.reindex(columns=SUMMARY_BY_SCENARIO_COLUMNS_V31)
+        std_cols = [c for c in summary.columns if c.endswith("_std")]
+        summary[std_cols] = summary[std_cols].fillna(0.0)
+    else:
+        summary = (
+            df.groupby("scenario")
+            .agg(
+                n=("instance_path", "count"),
+                feasible_rate=("feasible", "mean"),
+                profit_heuristic_mean=("profit_heuristic", "mean"),
+                profit_heuristic_std=("profit_heuristic", "std"),
+                mip_profit_mean=("mip_profit", "mean"),
+                mip_profit_std=("mip_profit", "std"),
+                gap_to_opt_mean=("gap_to_opt", "mean"),
+                gap_to_opt_std=("gap_to_opt", "std"),
+                ub_profit_mean=("ub_profit", "mean"),
+                ub_profit_std=("ub_profit", "std"),
+                gap_to_ub_mean=("gap_to_ub", "mean"),
+                gap_to_ub_std=("gap_to_ub", "std"),
+                runtime_mean=("runtime_s", "mean"),
+            )
+            .reset_index()
+            .sort_values("scenario")
+        )
     out_summary = _tagged_output_path(
         os.path.join(output_dir, "summary_by_scenario.csv"), output_tag
     )
@@ -879,7 +1117,10 @@ def run_experiment(
 
     # Plot: feasibility rate bar
     plt.figure(figsize=(10, 4))
-    plt.bar(summary["scenario"], summary["feasible_rate"])
+    _feas_col = (
+        "feasible_mean" if "feasible_mean" in summary.columns else "feasible_rate"
+    )
+    plt.bar(summary["scenario"], summary[_feas_col])
     plt.xticks(rotation=25, ha="right")
     plt.ylim(0, 1.0)
     plt.title("Feasible rate by scenario")
@@ -947,7 +1188,8 @@ def main() -> None:
     import argparse
 
     ap = argparse.ArgumentParser(
-        description="Run full experiment (heuristic + MIP) and write CSV/PNGs under output-dir."
+        description="Run heuristic + MIP benchmark; write CSV under output-dir. "
+        "PNG histograms only if you pass --with-plots."
     )
     ap.add_argument(
         "--glob",
@@ -955,21 +1197,26 @@ def main() -> None:
         help="Instance file glob",
     )
     ap.add_argument(
+        "--with-plots",
+        action="store_true",
+        help="Also write PNG histograms under output-dir (default: CSV only)",
+    )
+    ap.add_argument(
         "--no-plots",
         action="store_true",
-        help="Skip PNG figures (CSV only)",
+        help="No-op (kept for backward compatibility; histograms are off unless --with-plots)",
     )
     ap.add_argument(
         "--mip-time-limit",
         type=float,
         default=20.0,
-        help="Gurobi MIP time limit per instance (seconds)",
+        help="Gurobi MIP time limit per instance (seconds); 0 or negative = no limit (same spirit as problem_1_code.py)",
     )
     ap.add_argument(
         "--lp-time-limit",
         type=float,
         default=45.0,
-        help="Gurobi LP relaxation time limit when MIP yields no objective (seconds)",
+        help="LP relaxation time limit when MIP yields no objective (seconds); 0 or negative = no Gurobi LP cap; PuLP uses a long CBC cap",
     )
     ap.add_argument(
         "--tag",
@@ -981,14 +1228,38 @@ def main() -> None:
         default="analysis_outputs",
         help="Directory for experiment_report*.csv, summary*.csv, and optional PNGs",
     )
+    ap.add_argument(
+        "--csv-columns",
+        choices=("full", "minimal", "v31"),
+        default="minimal",
+        help="Per-instance experiment_report: 'minimal', full canonical set, or 'v31' (slim + Gurobi_* names)",
+    )
+    ap.add_argument(
+        "--no-stream-csv",
+        action="store_true",
+        help="Buffer all rows and write experiment_report once at the end (default: append+flush after each instance)",
+    )
+    ap.add_argument(
+        "--high-priority",
+        action="store_true",
+        help="Best-effort: raise process scheduling priority (may require admin; no-op if denied)",
+    )
     args = ap.parse_args()
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+        sys.stderr.reconfigure(line_buffering=True)
+    except (AttributeError, OSError):
+        pass
     run_experiment(
         instance_glob=args.glob,
-        write_plots=not args.no_plots,
+        write_plots=args.with_plots,
         mip_time_limit_s=args.mip_time_limit,
         lp_time_limit_s=args.lp_time_limit,
         output_tag=args.tag,
         output_dir=args.output_dir,
+        csv_columns=args.csv_columns,
+        stream_csv=not args.no_stream_csv,
+        high_priority=args.high_priority,
     )
 
 

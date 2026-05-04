@@ -48,6 +48,16 @@ def main() -> int:
         default="analysis_outputs",
         help="Directory for CSV outputs (default: analysis_outputs)",
     )
+    p.add_argument(
+        "--no-stream-csv",
+        action="store_true",
+        help="Write experiment_report only after all instances finish",
+    )
+    p.add_argument(
+        "--high-priority",
+        action="store_true",
+        help="Best-effort higher CPU priority (may require admin)",
+    )
     args = p.parse_args()
     run_experiment(
         instance_glob=args.glob,
@@ -56,6 +66,8 @@ def main() -> int:
         lp_time_limit_s=args.lp_time_limit,
         output_tag=args.tag,
         output_dir=args.output_dir,
+        stream_csv=not args.no_stream_csv,
+        high_priority=args.high_priority,
     )
     return 0
 

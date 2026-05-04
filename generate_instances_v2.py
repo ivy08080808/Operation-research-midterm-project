@@ -22,8 +22,14 @@ def generate_moving_times(n_S, min_time=30, max_time=150):
     Generate symmetric moving times.
     T_ii = 0
     T_ij = T_ji
-    Moving time is a multiple of 30.
+    Moving time (minutes) must be a multiple of 30 (course PDF); callers must pass
+    min_time / max_time that are already multiples of 30 so randrange(..., step=30)
+    only hits ..., 60, 90, ... (e.g. min_time=45 would wrongly allow 45, 75, ...).
     """
+    if min_time % 30 != 0 or max_time % 30 != 0:
+        raise ValueError(
+            f"min_time and max_time must be multiples of 30, got min_time={min_time}, max_time={max_time}"
+        )
     moving_times = {}
 
     for i in range(1, n_S + 1):
@@ -134,107 +140,239 @@ def generate_instance(
         f.write("==========\n")
 
 
-if __name__ == "__main__":
-    output_dir = "generated_instances_v2"
-    os.makedirs(output_dir, exist_ok=True)
+def _uniform_station_probs(n_s: int):
+    p = 1.0 / float(n_s)
+    return [p] * n_s
 
-    scenarios = {
-        "S1_baseline": {
-            "n_S": 5,
-            "n_C": 10,
-            "n_L": 3,
-            "n_K": 20,
-            "n_D": 5,
-            "B": 600,
-            "car_counts": [4, 4, 2],
-            "hourly_rates": [100, 200, 500],
-            "order_level_probs": [0.33, 0.33, 0.34],
-            "pickup_station_probs": [0.20, 0.20, 0.20, 0.20, 0.20],
-            "return_station_probs": [0.20, 0.20, 0.20, 0.20, 0.20],
-            "min_duration_hours": 1,
-            "max_duration_hours": 12,
-            "min_moving_time": 30,
-            "max_moving_time": 150,
-        },
-        "S2_high_low_level_demand": {
-            "n_S": 5,
-            "n_C": 10,
-            "n_L": 3,
-            "n_K": 20,
-            "n_D": 5,
-            "B": 600,
-            "car_counts": [4, 4, 2],
-            "hourly_rates": [100, 200, 500],
-            "order_level_probs": [0.70, 0.20, 0.10],
-            "pickup_station_probs": [0.20, 0.20, 0.20, 0.20, 0.20],
-            "return_station_probs": [0.20, 0.20, 0.20, 0.20, 0.20],
-            "min_duration_hours": 1,
-            "max_duration_hours": 12,
-            "min_moving_time": 30,
-            "max_moving_time": 150,
-        },
-        "S3_geographic_imbalance": {
-            "n_S": 5,
-            "n_C": 10,
-            "n_L": 3,
-            "n_K": 20,
-            "n_D": 5,
-            "B": 600,
-            "car_counts": [4, 4, 2],
-            "hourly_rates": [100, 200, 500],
-            "order_level_probs": [0.33, 0.33, 0.34],
-            "pickup_station_probs": [0.60, 0.10, 0.10, 0.10, 0.10],
-            "return_station_probs": [0.10, 0.10, 0.10, 0.10, 0.60],
-            "min_duration_hours": 1,
-            "max_duration_hours": 12,
-            "min_moving_time": 30,
-            "max_moving_time": 150,
-        },
-        "S4_high_order_load": {
-            "n_S": 5,
-            "n_C": 10,
-            "n_L": 3,
-            "n_K": 40,
-            "n_D": 5,
-            "B": 600,
-            "car_counts": [4, 4, 2],
-            "hourly_rates": [100, 200, 500],
-            "order_level_probs": [0.33, 0.33, 0.34],
-            "pickup_station_probs": [0.20, 0.20, 0.20, 0.20, 0.20],
-            "return_station_probs": [0.20, 0.20, 0.20, 0.20, 0.20],
-            "min_duration_hours": 1,
-            "max_duration_hours": 8,
-            "min_moving_time": 30,
-            "max_moving_time": 150,
-        },
-        "S5_tight_relo_budget": {
-            "n_S": 5,
-            "n_C": 10,
-            "n_L": 3,
-            "n_K": 20,
-            "n_D": 5,
-            "B": 150,
-            "car_counts": [4, 4, 2],
-            "hourly_rates": [100, 200, 500],
-            "order_level_probs": [0.33, 0.33, 0.34],
-            "pickup_station_probs": [0.20, 0.20, 0.20, 0.20, 0.20],
-            "return_station_probs": [0.20, 0.20, 0.20, 0.20, 0.20],
-            "min_duration_hours": 1,
-            "max_duration_hours": 10,
-            "min_moving_time": 30,
-            "max_moving_time": 120,
-        },
-    }
 
-    # Generate 10 instances for each scenario
+def _hub_pick_return_probs(n_s: int, hub_pick: int, hub_ret: int, hub_w: int, rim_w: int):
+    """Pickups cluster at hub_pick; returns cluster at hub_ret (1-based indices)."""
+    pick = [rim_w] * n_s
+    pick[hub_pick - 1] = hub_w
+    sp = sum(pick)
+    pick_p = [x / sp for x in pick]
+    ret = [rim_w] * n_s
+    ret[hub_ret - 1] = hub_w
+    sr = sum(ret)
+    ret_p = [x / sr for x in ret]
+    return pick_p, ret_p
+
+
+def main(mode: str = "hard") -> None:
+    """
+    mode='hard'  -> generated_instances_v2_hard/ (default; same as before)
+    mode='ultra' -> generated_instances_v2_ultra/ (larger MIP; still respects PDF time/move rules)
+    """
+    mode = (mode or "hard").strip().lower()
+    if mode == "hard":
+        output_dir = "generated_instances_v2_hard"
+        os.makedirs(output_dir, exist_ok=True)
+        n_s = 8
+        u_st = _uniform_station_probs(n_s)
+        s3_pick_p, s3_ret_p = _hub_pick_return_probs(n_s, 1, 8, 12, 2)
+        scenarios = {
+            "S1_baseline": {
+                "n_S": n_s,
+                "n_C": 18,
+                "n_L": 3,
+                "n_K": 36,
+                "n_D": 7,
+                "B": 920,
+                "car_counts": [7, 7, 4],
+                "hourly_rates": [140, 320, 820],
+                "order_level_probs": [0.33, 0.33, 0.34],
+                "pickup_station_probs": u_st,
+                "return_station_probs": u_st,
+                "min_duration_hours": 1,
+                "max_duration_hours": 14,
+                "min_moving_time": 60,
+                "max_moving_time": 210,
+            },
+            "S2_high_low_level_demand": {
+                "n_S": n_s,
+                "n_C": 18,
+                "n_L": 3,
+                "n_K": 36,
+                "n_D": 7,
+                "B": 920,
+                "car_counts": [7, 7, 4],
+                "hourly_rates": [140, 320, 820],
+                "order_level_probs": [0.70, 0.20, 0.10],
+                "pickup_station_probs": u_st,
+                "return_station_probs": u_st,
+                "min_duration_hours": 1,
+                "max_duration_hours": 14,
+                "min_moving_time": 60,
+                "max_moving_time": 210,
+            },
+            "S3_geographic_imbalance": {
+                "n_S": n_s,
+                "n_C": 18,
+                "n_L": 3,
+                "n_K": 36,
+                "n_D": 7,
+                "B": 920,
+                "car_counts": [7, 7, 4],
+                "hourly_rates": [140, 320, 820],
+                "order_level_probs": [0.33, 0.33, 0.34],
+                "pickup_station_probs": s3_pick_p,
+                "return_station_probs": s3_ret_p,
+                "min_duration_hours": 1,
+                "max_duration_hours": 14,
+                "min_moving_time": 60,
+                "max_moving_time": 210,
+            },
+            "S4_high_order_load": {
+                "n_S": n_s,
+                "n_C": 18,
+                "n_L": 3,
+                "n_K": 72,
+                "n_D": 7,
+                "B": 920,
+                "car_counts": [7, 7, 4],
+                "hourly_rates": [140, 320, 820],
+                "order_level_probs": [0.33, 0.33, 0.34],
+                "pickup_station_probs": u_st,
+                "return_station_probs": u_st,
+                "min_duration_hours": 1,
+                "max_duration_hours": 9,
+                "min_moving_time": 60,
+                "max_moving_time": 210,
+            },
+            "S5_tight_relo_budget": {
+                "n_S": n_s,
+                "n_C": 18,
+                "n_L": 3,
+                "n_K": 36,
+                "n_D": 7,
+                "B": 260,
+                "car_counts": [7, 7, 4],
+                "hourly_rates": [140, 320, 820],
+                "order_level_probs": [0.33, 0.33, 0.34],
+                "pickup_station_probs": u_st,
+                "return_station_probs": u_st,
+                "min_duration_hours": 1,
+                "max_duration_hours": 12,
+                "min_moving_time": 30,
+                "max_moving_time": 180,
+            },
+        }
+        seed_base = 5000
+    elif mode == "ultra":
+        output_dir = "generated_instances_v2_ultra"
+        os.makedirs(output_dir, exist_ok=True)
+        n_s = 11
+        u_st = _uniform_station_probs(n_s)
+        s3_pick_p, s3_ret_p = _hub_pick_return_probs(n_s, 1, 11, 14, 2)
+        scenarios = {
+            "S1_baseline": {
+                "n_S": n_s,
+                "n_C": 30,
+                "n_L": 3,
+                "n_K": 58,
+                "n_D": 10,
+                "B": 1580,
+                "car_counts": [12, 10, 8],
+                "hourly_rates": [190, 440, 1080],
+                "order_level_probs": [0.33, 0.33, 0.34],
+                "pickup_station_probs": u_st,
+                "return_station_probs": u_st,
+                "min_duration_hours": 1,
+                "max_duration_hours": 18,
+                "min_moving_time": 60,
+                "max_moving_time": 270,
+            },
+            "S2_high_low_level_demand": {
+                "n_S": n_s,
+                "n_C": 30,
+                "n_L": 3,
+                "n_K": 58,
+                "n_D": 10,
+                "B": 1580,
+                "car_counts": [12, 10, 8],
+                "hourly_rates": [190, 440, 1080],
+                "order_level_probs": [0.70, 0.20, 0.10],
+                "pickup_station_probs": u_st,
+                "return_station_probs": u_st,
+                "min_duration_hours": 1,
+                "max_duration_hours": 18,
+                "min_moving_time": 60,
+                "max_moving_time": 270,
+            },
+            "S3_geographic_imbalance": {
+                "n_S": n_s,
+                "n_C": 30,
+                "n_L": 3,
+                "n_K": 58,
+                "n_D": 10,
+                "B": 1580,
+                "car_counts": [12, 10, 8],
+                "hourly_rates": [190, 440, 1080],
+                "order_level_probs": [0.33, 0.33, 0.34],
+                "pickup_station_probs": s3_pick_p,
+                "return_station_probs": s3_ret_p,
+                "min_duration_hours": 1,
+                "max_duration_hours": 18,
+                "min_moving_time": 60,
+                "max_moving_time": 270,
+            },
+            "S4_high_order_load": {
+                "n_S": n_s,
+                "n_C": 30,
+                "n_L": 3,
+                "n_K": 118,
+                "n_D": 10,
+                "B": 1580,
+                "car_counts": [12, 10, 8],
+                "hourly_rates": [190, 440, 1080],
+                "order_level_probs": [0.33, 0.33, 0.34],
+                "pickup_station_probs": u_st,
+                "return_station_probs": u_st,
+                "min_duration_hours": 1,
+                "max_duration_hours": 10,
+                "min_moving_time": 60,
+                "max_moving_time": 270,
+            },
+            "S5_tight_relo_budget": {
+                "n_S": n_s,
+                "n_C": 30,
+                "n_L": 3,
+                "n_K": 58,
+                "n_D": 10,
+                "B": 360,
+                "car_counts": [12, 10, 8],
+                "hourly_rates": [190, 440, 1080],
+                "order_level_probs": [0.33, 0.33, 0.34],
+                "pickup_station_probs": u_st,
+                "return_station_probs": u_st,
+                "min_duration_hours": 1,
+                "max_duration_hours": 14,
+                "min_moving_time": 30,
+                "max_moving_time": 210,
+            },
+        }
+        seed_base = 7000
+    else:
+        raise SystemExit(
+            "Usage: python3 generate_instances_v2.py [hard|ultra]\n"
+            "  hard  (default) -> generated_instances_v2_hard/\n"
+            "  ultra            -> generated_instances_v2_ultra/"
+        )
+
     for scenario_index, (scenario_name, params) in enumerate(scenarios.items()):
         for idx in range(1, 11):
             filename = os.path.join(output_dir, f"{scenario_name}_{idx:02d}.txt")
             generate_instance(
                 filename=filename,
-                seed=2000 + scenario_index * 100 + idx,
+                seed=seed_base + scenario_index * 100 + idx,
                 **params
             )
             print(f"Generated {filename}")
 
-    print("Done. Generated 50 instances.")
+    print(f"Done. Generated 50 instances under {output_dir}/ (mode={mode})")
+
+
+if __name__ == "__main__":
+    import sys
+
+    main(sys.argv[1] if len(sys.argv) > 1 else "hard")

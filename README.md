@@ -69,7 +69,7 @@ python3 OR114-2_midtermProject_exampleCode_grading_program.py
 ## Problem 4: Random instances & experiment table
 
 - **Spec & column definitions:** [docs/EXPERIMENT_REPORT.md](docs/EXPERIMENT_REPORT.md)
-- **Full run** (heuristic + Gurobi MIP benchmark + plots): `python3 analyze_generated_instances.py`
+- **Full run** (heuristic + Gurobi MIP benchmark → CSV; add `--with-plots` for histogram PNGs): `python3 analyze_generated_instances.py`
 - **Table only** (faster, no histogram PNGs): `python3 export_instance_profits.py`
 - Optional: `--output-dir analysis_outputs/v2/upperbound_version` and `--tag v2.5.3` to write tagged CSVs into a subfolder (see `analysis_outputs/README.txt`).
 

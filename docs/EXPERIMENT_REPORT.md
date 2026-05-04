@@ -14,7 +14,7 @@ This document explains how **`analysis_outputs/experiment_report.csv`** is produ
 
 | Command | Behavior |
 |---------|----------|
-| `python3 analyze_generated_instances.py` | Writes CSV + **all** PNG plots (histograms, etc.) |
+| `python3 analyze_generated_instances.py` | Writes CSV (and `summary_by_scenario.csv`); PNGs only with `--with-plots` |
 | `python3 export_instance_profits.py` | By default **CSV only** (faster), no plots |
 | `python3 export_instance_profits.py --with-plots` | Same as the full analyze run (includes plots) |
 | `python3 export_instance_profits.py --glob 'generated_instances_v2/*.txt'` | Custom glob for instance files |
@@ -40,7 +40,8 @@ Column order is fixed by the constant `EXPERIMENT_REPORT_COLUMNS` for stable rep
 | `revenue_heuristic` | When feasible: sum of revenue from accepted orders |
 | `compensation_heuristic` | When feasible: sum of rejection compensation |
 | `n_accepted_heuristic` | When feasible: number of accepted orders |
-| `runtime_s` | Wall-clock seconds for that instance (heuristic + MIP attempt; LP relaxation when run for UB) |
+| `runtime_s` | *(Full columns only.)* Wall-clock seconds for that instance (heuristic + MIP attempt; LP relaxation when run for UB) |
+| `gurobi_time/heuristic_time` | *(Minimal columns only.)* Two wall-clock parts as `gurobi_s/heuristic_s` (Gurobi/LP phase after the heuristic vs heuristic-only phase; six decimals each) |
 | `mip_status` | Gurobi status string (`OPTIMAL`, `GUROBI_ERROR_10010`, etc.) |
 | `mip_profit` | MIP objective; empty if no solution or error |
 | `mip_mipgap` | MIP gap when an incumbent exists; otherwise empty |
