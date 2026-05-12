@@ -2,7 +2,7 @@
 """
 Thin wrapper: runs the same experiment pipeline as analyze_generated_instances.
 
-Writes the unified table to analysis_outputs/experiment_report.csv (same pipeline
+Writes the unified table to analysis_outputs_small/experiment_report.csv (same pipeline
 as analyze_generated_instances). No separate MIP-via-problem_1_code path.
 
 By default this skips figure generation (faster). Pass --with-plots to also write histograms.
@@ -15,7 +15,7 @@ from analyze_generated_instances import run_experiment
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Export unified experiment CSV to analysis_outputs/")
+    p = argparse.ArgumentParser(description="Export unified experiment CSV to analysis_outputs_small/")
     p.add_argument(
         "--with-plots",
         action="store_true",
@@ -23,8 +23,8 @@ def main() -> int:
     )
     p.add_argument(
         "--glob",
-        default="generated_instances_v2/*.txt",
-        help="Instance file glob (default: generated_instances_v2/*.txt)",
+        default="generated_instances_small/*.txt",
+        help="Instance file glob (default: generated_instances_small/*.txt)",
     )
     p.add_argument(
         "--tag",
@@ -45,8 +45,8 @@ def main() -> int:
     )
     p.add_argument(
         "--output-dir",
-        default="analysis_outputs",
-        help="Directory for CSV outputs (default: analysis_outputs)",
+        default="analysis_outputs_small",
+        help="Directory for CSV outputs (default: analysis_outputs_small)",
     )
     p.add_argument(
         "--no-stream-csv",

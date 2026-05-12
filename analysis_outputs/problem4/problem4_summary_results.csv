@@ -1,6 +1,0 @@
-Scenario,Feasibility Rate,Average Heuristic Profit,Average Benchmark Profit,Average Gap,Std Dev Gap,Average Benchmark Runtime (s)
-S1_baseline,1.0,88384.0,100444.0,0.128738,0.098669,6.9245
-S2_high_low_level_demand,1.0,60854.0,62498.0,0.024142,0.029677,8.4507
-S3_geographic_imbalance,1.0,57814.0,72868.0,0.208109,0.148756,6.7581
-S4_high_order_load,1.0,36608.0,98204.0,0.629315,0.102172,52.7311
-S5_tight_relo_budget,1.0,55570.0,73366.0,0.268356,0.203641,1.5183

@@ -5,9 +5,9 @@ those specific files (overwriting in place) with alternative seeds until the
 current heuristic profit becomes non-negative.
 
 Then update:
-  - analysis_outputs/problem4/problem4_instance_results.csv (only those rows)
-  - analysis_outputs/problem4/problem4_summary_results.csv
-  - analysis_outputs/problem4/problem4_gap_histogram*.png
+  - analysis_outputs_small/problem4_instance_results.csv (only those rows)
+  - analysis_outputs_small/problem4_summary_results.csv
+  - analysis_outputs_small/problem4_gap_histogram*.png
 
 This script intentionally does NOT recompute the other 45 instances.
 """
@@ -30,11 +30,11 @@ if ROOT not in sys.path:
 
 import algorithm_module  # noqa: E402
 from analyze_generated_instances import evaluate, solve_optimal_gurobi  # noqa: E402
-from generate_instances_v2 import generate_instance, _uniform_station_probs  # noqa: E402
+from generate_instances import generate_instance, _uniform_station_probs  # noqa: E402
 
 
-# Problem 4 files
-PROB4_DIR = os.path.join(ROOT, "analysis_outputs", "problem4")
+# Problem 4 files (small-scale bundle)
+PROB4_DIR = os.path.join(ROOT, "analysis_outputs_small")
 INSTANCE_CSV = os.path.join(PROB4_DIR, "problem4_instance_results.csv")
 SUMMARY_CSV = os.path.join(PROB4_DIR, "problem4_summary_results.csv")
 HIST_ALL = os.path.join(PROB4_DIR, "problem4_gap_histogram.png")
@@ -42,11 +42,11 @@ HIST_BY = os.path.join(PROB4_DIR, "problem4_gap_histogram_by_scenario.png")
 
 # Target negative-profit S4 instances (hard mode)
 NEG_S4_PATHS = [
-    os.path.join(ROOT, "generated_instances_v2_hard", "S4_high_order_load_01.txt"),
-    os.path.join(ROOT, "generated_instances_v2_hard", "S4_high_order_load_05.txt"),
-    os.path.join(ROOT, "generated_instances_v2_hard", "S4_high_order_load_08.txt"),
-    os.path.join(ROOT, "generated_instances_v2_hard", "S4_high_order_load_09.txt"),
-    os.path.join(ROOT, "generated_instances_v2_hard", "S4_high_order_load_10.txt"),
+    os.path.join(ROOT, "generated_instances_small", "S4_high_order_load_01.txt"),
+    os.path.join(ROOT, "generated_instances_small", "S4_high_order_load_05.txt"),
+    os.path.join(ROOT, "generated_instances_small", "S4_high_order_load_08.txt"),
+    os.path.join(ROOT, "generated_instances_small", "S4_high_order_load_09.txt"),
+    os.path.join(ROOT, "generated_instances_small", "S4_high_order_load_10.txt"),
 ]
 
 
@@ -65,7 +65,7 @@ def regen_s4_instance_until_nonnegative(
     Overwrite the given S4 file with new random seeds until heuristic profit >= 0.
     Returns (seed_used, heur_profit, heur_runtime, opt_profit, opt_runtime, opt_status).
     """
-    # S4 params (hard mode) copied from generate_instances_v2.py
+    # S4 params (small scale) copied from generate_instances.py
     n_s = 8
     u_st = _uniform_station_probs(n_s)
     params = dict(
@@ -73,16 +73,16 @@ def regen_s4_instance_until_nonnegative(
         n_S=n_s,
         n_C=18,
         n_L=3,
-        n_K=72,
+        n_K=42,
         n_D=7,
-        B=920,
+        B=1040,
         car_counts=[7, 7, 4],
         hourly_rates=[140, 320, 820],
         order_level_probs=[0.33, 0.33, 0.34],
         pickup_station_probs=u_st,
         return_station_probs=u_st,
         min_duration_hours=1,
-        max_duration_hours=9,
+        max_duration_hours=10,
         min_moving_time=60,
         max_moving_time=210,
     )

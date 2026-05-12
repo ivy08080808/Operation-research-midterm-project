@@ -1,6 +1,6 @@
 # Problem 4: Experiment output design (`experiment_report.csv`)
 
-This document explains how **`analysis_outputs/experiment_report.csv`** is produced, what each column means, and how it relates to `export_instance_profits.py` and `analyze_generated_instances.py`, so you do not have to re-read the code later.
+This document explains how **`analysis_outputs_small/experiment_report.csv`** is produced (when you run the unified driver), what each column means, and how it relates to `export_instance_profits.py` and `analyze_generated_instances.py`, so you do not have to re-read the code later.
 
 ## Purpose (aligned with Assignment PDF Problem 4)
 
@@ -17,14 +17,14 @@ This document explains how **`analysis_outputs/experiment_report.csv`** is produ
 | `python3 analyze_generated_instances.py` | Writes CSV (and `summary_by_scenario.csv`); PNGs only with `--with-plots` |
 | `python3 export_instance_profits.py` | By default **CSV only** (faster), no plots |
 | `python3 export_instance_profits.py --with-plots` | Same as the full analyze run (includes plots) |
-| `python3 export_instance_profits.py --glob 'generated_instances_v2/*.txt'` | Custom glob for instance files |
+| `python3 export_instance_profits.py --glob 'generated_instances_small/*.txt'` | Custom glob for instance files |
 
-Output files (default directory `analysis_outputs/`; override with `--output-dir` on `analyze_generated_instances.py` / `export_instance_profits.py`):
+Output files (default directory **`analysis_outputs_small/`**; override with `--output-dir` on `analyze_generated_instances.py` / `export_instance_profits.py`):
 
 - **`experiment_report.csv`** — primary table (columns below); with `--tag X` the filename becomes `experiment_report_X.csv`.
 - **`summary_by_scenario.csv`** — per-scenario aggregates (means / standard deviations); tagged as `summary_by_scenario_X.csv` when using `--tag`.
 
-Archived tagged runs may live under `analysis_outputs/v1/`, `analysis_outputs/v2/upperbound1/`, etc.; see `analysis_outputs/README.txt`.
+Problem 4 quick tables and histograms for the small bundle may instead live as **`problem4_*.csv`** / PNGs under **`analysis_outputs_small/`** (see `run_problem4_experiments.py`).
 
 ## Column definitions (one row per instance)
 
@@ -32,7 +32,7 @@ Column order is fixed by the constant `EXPERIMENT_REPORT_COLUMNS` for stable rep
 
 | Column | Description |
 |--------|-------------|
-| `instance_path` | Path relative to the repo root (e.g. `generated_instances_v2/S1_baseline_01.txt`) |
+| `instance_path` | Path relative to the repo root (e.g. `generated_instances_small/S1_baseline_01.txt`) |
 | `scenario` | Scenario prefix inferred from the filename (e.g. `S1_baseline`) |
 | `n_orders` | Number of orders `nK` |
 | `feasible` | Whether the heuristic solution passes `evaluate` (time windows, level, dispatch, budget, etc.) |

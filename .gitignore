@@ -11,7 +11,7 @@ generated_instances_v2/
 
 # Local grading outputs
 result.csv
-analysis_outputs/result.csv
+analysis_outputs_small/result.csv
 
 # Local Python venv (Gurobi 13 + deps; regenerate with scripts/setup_academic_gurobi_env.sh)
 .venv-gurobi312/

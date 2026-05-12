@@ -152,5 +152,5 @@ if __name__ == '__main__':
             }])], ignore_index=True)
 
     # output result
-    Path("analysis_outputs").mkdir(parents=True, exist_ok=True)
-    result_df.to_csv("analysis_outputs/result.csv", index=False)
+    Path("analysis_outputs_small").mkdir(parents=True, exist_ok=True)
+    result_df.to_csv("analysis_outputs_small/result.csv", index=False)

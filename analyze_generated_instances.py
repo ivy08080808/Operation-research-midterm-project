@@ -35,7 +35,7 @@ How the upper bound is tightened (reporting pipeline)
    which term achieved the minimum (ties prefer the LP label when applicable).
 
 See also: ``docs/EXPERIMENT_REPORT.md``, ``export_instance_profits.py``,
-``analysis_outputs/README.txt``.
+``analysis_outputs_small/README.txt`` (if present).
 """
 
 import csv
@@ -47,7 +47,7 @@ from functools import lru_cache
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import NamedTuple, Optional
+from typing import NamedTuple, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -411,6 +411,29 @@ def profit_upper_bound_cardinality(path: str) -> float:
     return -2.0 * S + 3.0 * rev_ub
 
 
+def profit_upper_bound_no_gurobi(path: str, *, mode: str = "accept_all") -> Tuple[float, str]:
+    """
+    Valid upper bound on optimal integer profit **without** Gurobi MIP/LP.
+
+    ``mode``:
+      - ``accept_all``: ``ACCEPT_ALL_UB = sum_k R_k`` (linear in |K|; fastest).
+      - ``min_card_accept``: ``min(ACCEPT_ALL_UB, CARD_UB)`` using the same
+        per-car DP caps as ``profit_upper_bound_cardinality`` (no solver; can be
+        slower when |K| and B are large).
+
+    Returns ``(ub_profit, ub_type)`` for reporting as ``benchmark_profit`` /
+    ``benchmark_status`` in lightweight evaluations.
+    """
+    if mode == "accept_all":
+        return float(profit_upper_bound_accept_all(path)), "ACCEPT_ALL_UB"
+    if mode == "min_card_accept":
+        a = float(profit_upper_bound_accept_all(path))
+        c = float(profit_upper_bound_cardinality(path))
+        ub = float(min(a, c))
+        return ub, "MIN_ACCEPT_CARD_UB"
+    raise ValueError(f"Unknown profit_upper_bound_no_gurobi mode: {mode!r}")
+
+
 def _car_rental_instance_data(path: str):
     """
     Shared topology for Gurobi MIP/LP and PuLP LP relaxation (same as problem_1_code.py).
@@ -572,11 +595,12 @@ def solve_optimal_gurobi(path: str, time_limit_s: float = 20.0) -> MIPResult:
     return MIPResult(f"STATUS_{m.Status}", None, None, None, None, None)
 
 
-def solve_lp_relaxation_gurobi(path: str, time_limit_s: float = 45.0) -> Optional[float]:
+def solve_lp_relaxation_gurobi_detailed(
+    path: str, time_limit_s: float = 45.0
+) -> Tuple[Optional[float], str]:
     """
-    LP relaxation of the same MIP: all binary variables relaxed to [0,1].
-    For a maximization problem, the LP optimum is a valid upper bound on the integer optimum.
-    Returns min(lp_obj, sum_k R_k) when a primal objective is available, else None.
+    LP relaxation of the same MIP (continuous [0,1] on former binaries).
+    Returns (upper_bound_profit, status_label); objective capped by sum_k R_k.
     """
     try:
         m, K, _C, R, x, *_ = _build_car_rental_model(path, continuous_relaxation=True)
@@ -584,17 +608,33 @@ def solve_lp_relaxation_gurobi(path: str, time_limit_s: float = 45.0) -> Optiona
             m.Params.TimeLimit = float(time_limit_s)
         m.Params.Method = GRB.METHOD_AUTO
         m.optimize()
-    except gp.GurobiError:
-        return None
+    except gp.GurobiError as e:
+        return None, f"GUROBI_ERROR_{e.errno}"
 
     sum_r = float(sum(R[k] for k in K))
+
+    def _obj() -> Optional[float]:
+        if m.SolCount <= 0:
+            return None
+        return min(float(m.ObjVal), sum_r)
+
     if m.Status == GRB.OPTIMAL:
-        return min(float(m.ObjVal), sum_r)
+        return _obj(), "OPTIMAL"
     if m.Status in (GRB.TIME_LIMIT, GRB.SUBOPTIMAL) and m.SolCount > 0:
-        return min(float(m.ObjVal), sum_r)
+        return _obj(), "TIME_LIMIT" if m.Status == GRB.TIME_LIMIT else "SUBOPTIMAL"
     if m.SolCount > 0:
-        return min(float(m.ObjVal), sum_r)
-    return None
+        return _obj(), f"STATUS_{m.Status}"
+    return None, f"NO_SOLUTION_STATUS_{m.Status}"
+
+
+def solve_lp_relaxation_gurobi(path: str, time_limit_s: float = 45.0) -> Optional[float]:
+    """
+    LP relaxation of the same MIP: all binary variables relaxed to [0,1].
+    For a maximization problem, the LP optimum is a valid upper bound on the integer optimum.
+    Returns min(lp_obj, sum_k R_k) when a primal objective is available, else None.
+    """
+    obj, _st = solve_lp_relaxation_gurobi_detailed(path, time_limit_s=time_limit_s)
+    return obj
 
 
 def solve_lp_relaxation_pulp(path: str, time_limit_s: float = 60.0) -> Optional[float]:
@@ -782,13 +822,13 @@ def _internal_row_to_csv_row(row: dict, csv_columns: str) -> dict:
 
 
 def run_experiment(
-    instance_glob: str = "generated_instances_v2/*.txt",
+    instance_glob: str = "generated_instances_small/*.txt",
     *,
     write_plots: bool = False,
     mip_time_limit_s: float = 20.0,
     lp_time_limit_s: float = 45.0,
     output_tag: Optional[str] = None,
-    output_dir: str = "analysis_outputs",
+    output_dir: str = "analysis_outputs_small",
     csv_columns: str = "full",
     stream_csv: bool = True,
     high_priority: bool = False,
@@ -800,7 +840,7 @@ def run_experiment(
     files = sorted(glob.glob(instance_glob))
     if not files:
         raise SystemExit(
-            f"No files matched {instance_glob!r}. Unzip generated_instances_v2.zip if needed."
+            f"No files matched {instance_glob!r}. Run: python3 generate_instances.py --scale small"
         )
 
     os.makedirs(output_dir, exist_ok=True)
@@ -1193,7 +1233,7 @@ def main() -> None:
     )
     ap.add_argument(
         "--glob",
-        default="generated_instances_v2/*.txt",
+        default="generated_instances_small/*.txt",
         help="Instance file glob",
     )
     ap.add_argument(
@@ -1225,7 +1265,7 @@ def main() -> None:
     )
     ap.add_argument(
         "--output-dir",
-        default="analysis_outputs",
+        default="analysis_outputs_small",
         help="Directory for experiment_report*.csv, summary*.csv, and optional PNGs",
     )
     ap.add_argument(

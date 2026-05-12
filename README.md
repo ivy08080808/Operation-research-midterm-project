@@ -8,8 +8,9 @@ This repository contains code for the OR114-2 Spring 2026 midterm project.
 |------|----------|
 | Root `*.py` | Assignment / grading scripts: `algorithm_module.py` (required submission), `problem_1_code.py`, `analyze_generated_instances.py`, `grading_feasibility_check.py`, etc. |
 | `docs/` | Experiment notes [`EXPERIMENT_REPORT.md`](docs/EXPERIMENT_REPORT.md); scenario summary PDF: `scenario_summary.pdf` |
-| `analysis_outputs/` | **Regenerable** experiment CSV; snapshots under `v1/`; v2 tagged runs under `v2/algo_version/` and `v2/upperbound_version/` (see `analysis_outputs/README.txt`) |
-| `generated_instances_v2.zip` | Archive of random instances; extract to `generated_instances_v2/` (**not tracked**, see `.gitignore`) |
+| `analysis_outputs_small/` | Problem 4 MIP benchmark CSV + histograms for **small** instances |
+| `analysis_outputs_big/` | Problem 4-style evaluation (fast UB) CSV + histograms for **big** instances |
+| `generated_instances_small/`, `generated_instances_big/` | 50 instances each (5 scenarios × 10); regenerate with `generate_instances.py` |
 | Names containing `exampleCode` / `OR114-2_midtermProject_example*` | Course staff examples, separate from your submitted `algorithm_module.py` |
 
 If you see `__MACOSX/` or `.local_backup_*/` locally, they often come from unzip or git tooling—**safe to delete**; they are listed in `.gitignore`.
@@ -68,9 +69,10 @@ python3 OR114-2_midtermProject_exampleCode_grading_program.py
 
 ## Problem 4: Random instances & experiment table
 
-- **Spec & column definitions:** [docs/EXPERIMENT_REPORT.md](docs/EXPERIMENT_REPORT.md)
-- **Full run** (heuristic + Gurobi MIP benchmark → CSV; add `--with-plots` for histogram PNGs): `python3 analyze_generated_instances.py`
-- **Table only** (faster, no histogram PNGs): `python3 export_instance_profits.py`
-- Optional: `--output-dir analysis_outputs/v2/upperbound_version` and `--tag v2.5.3` to write tagged CSVs into a subfolder (see `analysis_outputs/README.txt`).
+- **Small (MIP benchmark):** `python3 run_problem4_experiments.py` (writes under `analysis_outputs_small/`).
+- **Big (fast upper bound, no Gurobi):** `python3 run_problem4_big_fast_ub_experiments.py` (writes under `analysis_outputs_big/`).
+- **Regenerate instances:** `python3 generate_instances.py --scale small` and `--scale big`.
+- **Full experiment driver:** `python3 analyze_generated_instances.py` (defaults to small-instance glob).
+- **Table only:** `python3 export_instance_profits.py`
 
-Main output (default): **`analysis_outputs/experiment_report.csv`** and **`summary_by_scenario.csv`** at the directory given by `--output-dir` (histogram PNGs only with `--with-plots`).
+Main CSV names in each bundle: **`problem4_instance_results.csv`**, **`problem4_summary_results.csv`** (histogram PNGs when produced).
